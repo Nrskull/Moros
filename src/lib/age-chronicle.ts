@@ -16,19 +16,19 @@ export interface CharacterAgeProfile {
 export const sampleChronicleEntries: ChronicleEntry[] = [
   {
     id: 'chronicle_177',
-    label: '负层纪年 177',
-    note: '旧城局势刚刚开始失衡，角色关系仍处在彼此试探的阶段。',
+    label: '新纪年 177',
+    note: '负层夹缝、硕鼠粮仓。',
     year: 177,
   },
   {
     id: 'chronicle_180',
-    label: '负层纪年 180',
-    note: '关键人物正式汇流，适合对照不同角色在同一节点的年龄与位置。',
+    label: '新纪年 180',
+    note: '竞选年、慈善领养。',
     year: 180,
   },
   {
     id: 'chronicle_184',
-    label: '负层纪年 184',
+    label: '新纪年 184',
     note: '作为后续节点，用来验证自定义编年扩展后年龄是否持续自动推算。',
     year: 184,
   },
@@ -39,7 +39,7 @@ export const sampleCharacterProfiles: CharacterAgeProfile[] = [
     id: 'char_liuzhizhou',
     name: '柳之舟',
     anchorYear: 177,
-    anchorAge: 14,
+    anchorAge: 11,
     color: '#a46245',
   },
   {
@@ -47,14 +47,21 @@ export const sampleCharacterProfiles: CharacterAgeProfile[] = [
     name: '柳之清',
     anchorYear: 177,
     anchorAge: 10,
-    color: '#4d7b95',
+    color: '#2a9a8b',
   },
   {
     id: 'char_yaoguang',
     name: '爻光',
     anchorYear: 180,
     anchorAge: 14,
-    color: '#7c6497',
+    color: '#42a2de',
+  },
+  {
+    id: 'char_bangyi',
+    name: '邦伊',
+    anchorYear: 177,
+    anchorAge: 5,
+    color: '#dcde42',
   },
 ]
 

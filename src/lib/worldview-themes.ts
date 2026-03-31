@@ -12,20 +12,20 @@ export interface WorldviewTheme {
 }
 
 const fallbackWorldviewTheme: WorldviewTheme = {
-  accent: '#7a5d4f',
-  accentSoft: 'rgba(122, 93, 79, 0.12)',
+  accent: '#8894a0',
+  accentSoft: 'rgba(136, 148, 160, 0.12)',
   coverImage: '/background.jpg',
   coverLabel: '默认封面',
   coverPosition: 'center center',
   description: '当前世界观尚未配置独立封面与说明，先用通用封面承接整体视觉氛围。',
-  surfaceStart: '#f4f5f7',
-  surfaceEnd: '#f3ede7',
+  surfaceStart: '#f4f6f8',
+  surfaceEnd: '#edf2f5',
   glow: 'rgba(186, 197, 209, 0.36)',
-  glowSoft: 'rgba(213, 195, 177, 0.28)',
+  glowSoft: 'rgba(216, 224, 232, 0.28)',
 }
 
 export const worldviewThemes: Record<string, WorldviewTheme> = {
-  莫名其妙调查: {
+  莫名其妙: {
     accent: '#7e8792',
     accentSoft: 'rgba(126, 135, 146, 0.12)',
     coverImage: '',

@@ -19,11 +19,11 @@
   export let showDetailsEntry = false
   export let showTrack = true
   export let top = 0
-  export let trackColor = '#e7d0c1'
+  export let trackColor = '#d9e0e6'
+  export let trackLabel = '未分配轨道'
   export let width = 0
   export let onBlurCard: () => void = () => {}
   export let onDeleteCard: () => void = () => {}
-  export let onEditCard: () => void = () => {}
   export let onFocusCard: () => void = () => {}
   export let onMouseEnterCard: () => void = () => {}
   export let onMouseLeaveCard: () => void = () => {}
@@ -42,11 +42,6 @@
 
     event.preventDefault()
     onToggleCard()
-  }
-
-  function handleEditClick(event: MouseEvent): void {
-    event.stopPropagation()
-    onEditCard()
   }
 
   function handleDeleteClick(event: MouseEvent): void {
@@ -122,17 +117,9 @@
           onpointerdown={(event) => event.stopPropagation()}
           onclick={handleOpenDetailsClick}
         >
-          记录详情
+          编辑详情
         </button>
       {/if}
-      <button
-        class="event-action"
-        type="button"
-        onpointerdown={(event) => event.stopPropagation()}
-        onclick={handleEditClick}
-      >
-        编辑
-      </button>
       <button
         class="event-action is-danger"
         type="button"
@@ -148,7 +135,7 @@
     <span class="event-meta">
       <span class="event-range">{formatTimelineRange(event.startTime, event.endTime)}</span>
       {#if showTrack || active}
-        <span class="event-track">第 {event.trackIndex + 1} 轨</span>
+        <span class="event-track">{trackLabel}</span>
       {/if}
     </span>
   {/if}

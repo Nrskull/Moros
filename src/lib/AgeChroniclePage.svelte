@@ -1,5 +1,6 @@
 <script lang="ts">
   import { slide } from 'svelte/transition'
+  import { cardDeckIn, cardDeckOut } from './transitions'
   import {
     calculateCharacterAge,
     formatCharacterAge,
@@ -13,6 +14,8 @@
   export let worldviewHasCover = true
   export let worldviewName = '未选择世界观'
   export let worldviewTags: string[] = []
+  export let worldviewThemeStyle = ''
+  export let worldviewTransitionKey = 'default'
 
   const colorPool = ['#a46245', '#4d7b95', '#7c6497', '#5a8b64', '#b06f8d', '#9a7a42']
   const CREATE_CHRONICLE_PANEL_ID = 'create'
@@ -226,20 +229,40 @@
 <svelte:window onclick={handleWindowClick} />
 
 <section class="age-page">
-  <section class:is-plain={!worldviewHasCover} class="hero-panel hero-panel-worldview age-hero">
-    <div class="hero-copy worldview-hero-copy">
-      <p class="eyebrow">当前世界观 / 角色年龄编年</p>
-      <h1>{worldviewName}</h1>
-      <p class="lede">
-        {worldviewDescription} 当前页面按自定义编年节点记录角色年龄，并根据“基准编年 + 基准年龄”自动推算。
-      </p>
-      <div class="hero-pill-row" aria-label="角色年龄页补充信息">
-        {#each worldviewTags as tag}
-          <span>{tag}</span>
-        {/each}
-      </div>
-    </div>
-  </section>
+  <div class="worldview-stage worldview-stage-hero">
+    {#each [
+      {
+        description: worldviewDescription,
+        hasCover: worldviewHasCover,
+        key: worldviewTransitionKey,
+        name: worldviewName,
+        tags: worldviewTags,
+        themeStyle: worldviewThemeStyle,
+      },
+    ] as scene (scene.key)}
+      <section
+        class:is-current={scene.key === worldviewTransitionKey}
+        class:is-plain={!scene.hasCover}
+        class="hero-panel hero-panel-worldview age-hero worldview-layer"
+        style={scene.themeStyle}
+        in:cardDeckIn
+        out:cardDeckOut
+      >
+        <div class="hero-copy worldview-hero-copy">
+          <p class="eyebrow">当前世界观 / 角色年龄编年</p>
+          <h1>{scene.name}</h1>
+          <p class="lede">
+            {scene.description} 当前页面按自定义编年节点记录角色年龄，并根据“基准编年 + 基准年龄”自动推算。
+          </p>
+          <div class="hero-pill-row" aria-label="角色年龄页补充信息">
+            {#each scene.tags as tag}
+              <span>{tag}</span>
+            {/each}
+          </div>
+        </div>
+      </section>
+    {/each}
+  </div>
 
   <section class="age-workspace">
     <aside class="age-sidebar">

@@ -1,10 +1,16 @@
 <script lang="ts">
   import { spring } from 'svelte/motion'
+  import {
+    worldviewContents,
+    getWorldviewContent,
+    type WorldviewContent,
+  } from './content/worldviews'
   import AgeChroniclePage from './lib/AgeChroniclePage.svelte'
   import EventDetailPage from './lib/EventDetailPage.svelte'
   import TimelineAxis from './lib/TimelineAxis.svelte'
   import TimelineEventCard from './lib/TimelineEventCard.svelte'
   import { mockEvents } from './lib/mock-events'
+  import { cardDeckIn, cardDeckOut, seaFogIn, seaFogOut } from './lib/transitions'
   import {
     createAdaptiveTimelineTicks,
     createTimelineLayout,
@@ -19,7 +25,7 @@
 
   type ZoomDensityMode = 'overview' | 'compact' | 'detail'
   type AppPage = 'timeline' | 'age-chronicle' | 'event-detail'
-  type DrawerMode = 'none' | 'event' | 'settings'
+  type DrawerMode = 'none' | 'event' | 'worldview'
   type EventEditorMode = 'create' | 'edit'
   type EventDragMode = 'move' | 'resize-end'
   type TimelineMode = 'view' | 'edit'
@@ -63,6 +69,7 @@
     resizing: boolean
     trackColor: string
     trackId: string
+    trackLabel: string
   }
 
   const axisHeight = 52
@@ -74,7 +81,9 @@
   const EVENT_DRAG_THRESHOLD = 10
   const DEFAULT_WORLDVIEW_NAME = '未分类世界观'
   const FIXED_LAYOUT_SURFACE_PADDING = 64
-  const defaultTrackPalette = ['#e7d0c1', '#c8dce6', '#d5cae6', '#d1e3d3', '#e6cddd', '#e5dbbc']
+  const TRACK_LEADING_GUTTER = 132
+  const defaultTrackPalette = ['#d9e0e6', '#c8dce6', '#d5cae6', '#d1e3d3', '#e1d8e6', '#dde3e8']
+  const defaultTrackLabels = ['公共线1', '公共线2', '其它线1', 'ho404线']
   const activeCardBounce = spring(0, { stiffness: 0.22, damping: 0.58 })
   const surfaceNudge = spring(0, { stiffness: 0.16, damping: 0.72 })
 
@@ -82,19 +91,32 @@
     return `track_${index + 1}`
   }
 
-  function createDefaultTrack(index: number): TimelineTrack {
+  function getNextTrackLabel(existingTracks: TimelineTrack[]): string {
+    const existingLabels = new Set(existingTracks.map((track) => track.label))
+    const nextDefaultLabel = defaultTrackLabels.find((label) => !existingLabels.has(label))
+
+    if (nextDefaultLabel) {
+      return nextDefaultLabel
+    }
+
+    let extraIndex = 1
+    while (existingLabels.has(`扩展线${extraIndex}`)) {
+      extraIndex += 1
+    }
+
+    return `扩展线${extraIndex}`
+  }
+
+  function createDefaultTrack(index: number, existingTracks: TimelineTrack[] = []): TimelineTrack {
     return {
       id: createTrackId(index),
-      label: `第 ${index + 1} 轨`,
+      label: getNextTrackLabel(existingTracks),
       color: defaultTrackPalette[index % defaultTrackPalette.length],
     }
   }
 
   function relabelTracks(tracks: TimelineTrack[]): TimelineTrack[] {
-    return tracks.map((track, index) => ({
-      ...track,
-      label: `第 ${index + 1} 轨`,
-    }))
+    return tracks
   }
 
   function sortEditableEvents(events: EditableTimelineEvent[]): EditableTimelineEvent[] {
@@ -127,9 +149,11 @@
       })
     })
 
-    const tracks = Array.from({ length: Math.max(4, maxTrackCount) }, (_, index) =>
-      createDefaultTrack(index),
-    )
+    const trackCount = Math.max(4, maxTrackCount)
+    const tracks = Array.from({ length: trackCount }).reduce<TimelineTrack[]>((list, _, index) => {
+      list.push(createDefaultTrack(index, list))
+      return list
+    }, [])
 
     return {
       tracks,
@@ -164,7 +188,7 @@
         end: 0,
         events: [],
         totalHeight: trackCount * trackHeight,
-        totalWidth: FIXED_LAYOUT_SURFACE_PADDING * 2,
+        totalWidth: TRACK_LEADING_GUTTER + FIXED_LAYOUT_SURFACE_PADDING * 2,
         trackCount,
         zoomFactor,
       }
@@ -186,7 +210,7 @@
         trackIndex,
         top: trackIndex * trackHeight,
         width,
-        x: (event.startTime - origin) * zoomFactor,
+        x: TRACK_LEADING_GUTTER + (event.startTime - origin) * zoomFactor,
       }
     })
 
@@ -198,7 +222,7 @@
       end,
       events: positionedEvents,
       totalHeight: trackCount * trackHeight,
-      totalWidth: Math.max(maxRight + FIXED_LAYOUT_SURFACE_PADDING, 720),
+      totalWidth: Math.max(maxRight + FIXED_LAYOUT_SURFACE_PADDING, TRACK_LEADING_GUTTER + 720),
       trackCount,
       zoomFactor,
     }
@@ -208,10 +232,15 @@
 
   let timelineScrollElement: HTMLDivElement | null = null
   let timelineSurfaceElement: HTMLDivElement | null = null
+  let worldviewMenuElement: HTMLDivElement | null = null
+  let tagFilterContainerElement: HTMLDivElement | null = null
 
   let timelineTracks: TimelineTrack[] = initialTimelineState.tracks
   let timelineEvents: EditableTimelineEvent[] = initialTimelineState.events
+  let customWorldviews: WorldviewContent[] = []
   let selectedWorldview = timelineEvents[0]?.worldview ?? ''
+  let isWorldviewMenuOpen = false
+  let isTagFilterOpen = false
   let zoomLevel = 1
   let activePage: AppPage = 'timeline'
   let detailEventId = ''
@@ -232,8 +261,7 @@
   let editingEventId = ''
 
   let projectTitle = '各种跑团时间轴'
-  let projectLead = '当前版本已经进入 Phase 3，支持在时间轴里直接新建、编辑、删除并整理事件。'
-  let boardHeading = '下面是交互时间轴'
+  let boardHeading = '时间轴'
   let boardNote = '支持世界观切换、语义缩放、拖拽漫游、卡片拖拽改期，以及抽屉式事件编辑。'
 
   let draftWorldview = ''
@@ -245,6 +273,9 @@
   let draftSummary = ''
   let draftBody = ''
   let draftTagsText = ''
+  let draftWorldviewName = ''
+  let draftWorldviewDescription = ''
+  let draftWorldviewTagsText = ''
 
   let eventDragId = ''
   let eventDragMode: EventDragMode = 'move'
@@ -354,8 +385,19 @@
     selectedTagFilters = []
   }
 
+  function toggleWorldviewMenu(): void {
+    isWorldviewMenuOpen = !isWorldviewMenuOpen
+  }
+
+  function toggleTagFilterPanel(): void {
+    isTagFilterOpen = !isTagFilterOpen
+  }
+
   function addTrack(): void {
-    timelineTracks = relabelTracks([...timelineTracks, createDefaultTrack(timelineTracks.length)])
+    timelineTracks = relabelTracks([
+      ...timelineTracks,
+      createDefaultTrack(timelineTracks.length, timelineTracks),
+    ])
   }
 
   function updateTrackColor(trackId: string, color: string): void {
@@ -448,6 +490,12 @@
     draftTagsText = '#待整理'
   }
 
+  function resetWorldviewDraft(): void {
+    draftWorldviewName = ''
+    draftWorldviewDescription = ''
+    draftWorldviewTagsText = '#世界观'
+  }
+
   function openCreateEvent(): void {
     eventEditorMode = 'create'
     editingEventId = ''
@@ -455,30 +503,43 @@
     drawerMode = 'event'
   }
 
-  function openEditEvent(event: { id: string }): void {
-    const sourceEvent = timelineEvents.find((item) => item.id === event.id)
-
-    if (!sourceEvent) {
-      return
-    }
-
-    eventEditorMode = 'edit'
-    editingEventId = sourceEvent.id
-    draftWorldview = sourceEvent.worldview
-    draftTitle = sourceEvent.title
-    draftStartTime = sourceEvent.startTime
-    draftEndTime = sourceEvent.endTime
-    draftTrackId = sourceEvent.trackId
-    draftDetailImage = sourceEvent.detailImage ?? ''
-    draftSummary = sourceEvent.summary
-    draftBody = sourceEvent.body
-    draftTagsText = formatTags(sourceEvent.tags)
-    drawerMode = 'event'
+  function openCreateWorldview(): void {
+    resetWorldviewDraft()
+    drawerMode = 'worldview'
+    editingEventId = ''
   }
 
   function closeDrawer(): void {
     drawerMode = 'none'
     editingEventId = ''
+  }
+
+  function saveWorldviewDraft(): void {
+    const name = draftWorldviewName.trim()
+    const description = draftWorldviewDescription.trim()
+    const tags = serialiseTags(draftWorldviewTagsText)
+
+    if (name === '') {
+      return
+    }
+
+    if (worldviewOptions.includes(name)) {
+      if (typeof window !== 'undefined') {
+        window.alert(`世界观“${name}”已经存在。`)
+      }
+      return
+    }
+
+    customWorldviews = [
+      ...customWorldviews,
+      {
+        name,
+        description: description || '这是一个新建世界观，简介尚待补充。',
+        tags,
+      },
+    ]
+    selectedWorldview = name
+    closeDrawer()
   }
 
   function saveDraftEvent(): void {
@@ -552,11 +613,6 @@
     }
   }
 
-  function openSettings(): void {
-    drawerMode = 'settings'
-    editingEventId = ''
-  }
-
   function handleWindowKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape') {
       return
@@ -576,7 +632,57 @@
     hoveredEventId = ''
   }
 
-  $: worldviewOptions = [...new Set(timelineEvents.map((event) => event.worldview).filter(Boolean))]
+  function handleWindowClick(event: MouseEvent): void {
+    const target = event.target
+
+    if (!(target instanceof Node)) {
+      return
+    }
+
+    if (isWorldviewMenuOpen && worldviewMenuElement && !worldviewMenuElement.contains(target)) {
+      isWorldviewMenuOpen = false
+    }
+
+    if (isTagFilterOpen && tagFilterContainerElement && !tagFilterContainerElement.contains(target)) {
+      isTagFilterOpen = false
+    }
+  }
+
+  function resolveWorldviewContent(name: string): WorldviewContent {
+    return customWorldviews.find((entry) => entry.name === name) ?? getWorldviewContent(name)
+  }
+
+  function normaliseIntervalEnd(start: number, end: number): number {
+    return end > start ? end : start + 1
+  }
+
+  function hasTrackOverlap(eventId: string): boolean {
+    const targetEvent = timelineEvents.find((event) => event.id === eventId)
+
+    if (!targetEvent) {
+      return false
+    }
+
+    const targetEnd = normaliseIntervalEnd(targetEvent.startTime, targetEvent.endTime)
+
+    return timelineEvents.some((event) => {
+      if (
+        event.id === targetEvent.id ||
+        event.worldview !== targetEvent.worldview ||
+        event.trackId !== targetEvent.trackId
+      ) {
+        return false
+      }
+
+      const currentEnd = normaliseIntervalEnd(event.startTime, event.endTime)
+      return targetEvent.startTime < currentEnd && targetEnd > event.startTime
+    })
+  }
+
+  $: configuredWorldviewNames = [...worldviewContents, ...customWorldviews].map((entry) => entry.name)
+  $: worldviewOptions = [
+    ...new Set([...configuredWorldviewNames, ...timelineEvents.map((event) => event.worldview)].filter(Boolean)),
+  ]
   $: if (worldviewOptions.length === 0) {
     selectedWorldview = ''
     activeEventId = ''
@@ -613,8 +719,12 @@
     layout.zoomFactor,
     density.tickBaseStep,
     density.minTickLabelSpacingPx,
-  )
+  ).map((tick) => ({
+    ...tick,
+    x: tick.x + TRACK_LEADING_GUTTER,
+  }))
   $: trackColorMap = new Map(timelineTracks.map((track) => [track.id, track.color]))
+  $: trackLabelMap = new Map(timelineTracks.map((track) => [track.id, track.label]))
   $: timelineEventMap = new Map(timelineEvents.map((event) => [event.id, event]))
   $: canExpandEvents = timelineMode === 'view'
   $: surfaceBottomPadding = density.expandedEventHeight - density.collapsedEventHeight + 18
@@ -652,13 +762,22 @@
       renderedTop: event.top + axisHeight + axisContentGap,
       renderedWidth: expanded ? Math.max(event.duration * zoomFactor, density.expandedCardWidth) : event.width,
       resizing,
-      trackColor: trackColorMap.get(sourceEvent?.trackId ?? timelineTracks[0]?.id ?? '') ?? '#e7d0c1',
+      trackColor: trackColorMap.get(sourceEvent?.trackId ?? timelineTracks[0]?.id ?? '') ?? '#d9e0e6',
       trackId: sourceEvent?.trackId ?? timelineTracks[0]?.id ?? '',
+      trackLabel: trackLabelMap.get(sourceEvent?.trackId ?? timelineTracks[0]?.id ?? '') ?? '未分配轨道',
     }
   })
   $: activeWorldviewName = selectedWorldview || worldviewOptions[0] || DEFAULT_WORLDVIEW_NAME
+  $: activeWorldviewContent = resolveWorldviewContent(activeWorldviewName)
   $: currentWorldviewTheme = getWorldviewTheme(activeWorldviewName)
   $: themeStyle = createWorldviewThemeStyle(currentWorldviewTheme)
+  $: activeTimelineHeroScene = {
+    isPlain: currentWorldviewTheme.coverImage === '',
+    key: activeWorldviewName,
+    themeStyle,
+    worldviewContent: activeWorldviewContent,
+    worldviewName: activeWorldviewName,
+  }
   $: modeDescription =
     timelineMode === 'edit'
       ? '当前使用固定轨道，可直接新增轨道并调整轨道颜色。'
@@ -773,6 +892,8 @@
 
   function changeWorldview(worldview: string): void {
     selectedWorldview = worldview
+    isWorldviewMenuOpen = false
+    isTagFilterOpen = false
     activeEventId = ''
     hoveredEventId = ''
     timelineScrollElement?.scrollTo({ left: 0, behavior: 'smooth' })
@@ -1028,6 +1149,22 @@
       eventDragTarget.releasePointerCapture(pointerId)
     }
 
+    const draggedEventId = eventDragId
+    const shouldRevert = isEventDragging && hasTrackOverlap(draggedEventId)
+
+    if (shouldRevert) {
+      timelineEvents = timelineEvents.map((item) =>
+        item.id === draggedEventId
+          ? {
+              ...item,
+              startTime: eventDragOriginStartTime,
+              endTime: eventDragOriginEndTime,
+              trackId: eventDragOriginTrackId,
+            }
+          : item,
+      )
+    }
+
     if (isEventDragging) {
       suppressClick = true
 
@@ -1083,59 +1220,104 @@
 </svelte:head>
 
 <svelte:window
+  onclick={handleWindowClick}
   onkeydown={handleWindowKeydown}
   onpointercancel={handleWindowPointerCancel}
   onpointerup={handleWindowPointerUp}
 />
 
 <main class="shell" style={themeStyle}>
-  <nav class="page-switcher" aria-label="页面切换">
-    <button
-      class:is-current={activePage === 'timeline'}
-      class="page-switch"
-      type="button"
-      onclick={() => (activePage = 'timeline')}
-    >
-      故事时间轴
-    </button>
-    <button
-      class:is-current={activePage === 'age-chronicle'}
-      class="page-switch"
-      type="button"
-      onclick={() => (activePage = 'age-chronicle')}
-    >
-      角色年龄编年
-    </button>
-    {#if activePage === 'event-detail'}
-      <button class:is-current={true} class="page-switch" type="button">
-        事件详情
+  <div class="topbar">
+    <nav class="page-switcher" aria-label="页面切换">
+      <button
+        class:is-current={activePage === 'timeline'}
+        class="page-switch"
+        type="button"
+        onclick={() => (activePage = 'timeline')}
+      >
+        故事时间轴
       </button>
-    {/if}
-  </nav>
+      <button
+        class:is-current={activePage === 'age-chronicle'}
+        class="page-switch"
+        type="button"
+        onclick={() => (activePage = 'age-chronicle')}
+      >
+        角色年龄编年
+      </button>
+      {#if activePage === 'event-detail'}
+        <button class:is-current={true} class="page-switch" type="button">
+          事件详情
+        </button>
+      {/if}
+    </nav>
 
-  {#if activePage === 'timeline'}
-    <section class:is-plain={currentWorldviewTheme.coverImage === ''} class="hero-panel hero-panel-worldview">
-      <div class="hero-copy worldview-hero-copy">
-        <p class="eyebrow">当前世界观 / 故事时间轴</p>
-        <h1>{activeWorldviewName}</h1>
-        <p class="lede">{currentWorldviewTheme.description}</p>
-        <div class="hero-pill-row" aria-label="当前世界观补充信息">
-          {#each currentWorldviewTheme.coverLabel.split('/').map((segment) => segment.trim()).filter(Boolean) as tag}
-            <span>{tag}</span>
+    <div bind:this={worldviewMenuElement} class="worldview-dropdown">
+      <button
+        aria-expanded={isWorldviewMenuOpen}
+        class="worldview-dropdown-trigger"
+        type="button"
+        onclick={toggleWorldviewMenu}
+      >
+        <span class="worldview-dropdown-label">世界观</span>
+        <strong>{activeWorldviewName}</strong>
+      </button>
+
+      {#if isWorldviewMenuOpen}
+        <div
+          class="worldview-dropdown-menu"
+          in:seaFogIn={{ delay: 0, duration: 220 }}
+          out:seaFogOut={{ duration: 180 }}
+        >
+          {#each worldviewOptions as worldview}
+            {@const worldviewContent = resolveWorldviewContent(worldview)}
+            <button
+              class:is-current={selectedWorldview === worldview}
+              class="worldview-dropdown-item"
+              type="button"
+              onclick={() => changeWorldview(worldview)}
+            >
+              <strong>{worldview}</strong>
+              <span>{worldviewContent.description}</span>
+            </button>
           {/each}
         </div>
-      </div>
-    </section>
+      {/if}
+    </div>
+  </div>
+
+  {#if activePage === 'timeline'}
+    <div class="worldview-stage worldview-stage-hero">
+      {#each [activeTimelineHeroScene] as scene (scene.key)}
+        <section
+          class:is-current={scene.key === activeWorldviewName}
+          class:is-plain={scene.isPlain}
+          class="hero-panel hero-panel-worldview worldview-layer"
+          style={scene.themeStyle}
+          in:cardDeckIn
+          out:cardDeckOut
+        >
+          <div class="hero-copy worldview-hero-copy">
+            <p class="eyebrow">当前世界观 / 故事时间轴</p>
+            <h1>{scene.worldviewName}</h1>
+            <p class="lede">{scene.worldviewContent.description}</p>
+            <div class="hero-pill-row" aria-label="当前世界观补充信息">
+              {#each scene.worldviewContent.tags as tag}
+                <span>{tag}</span>
+              {/each}
+            </div>
+          </div>
+        </section>
+      {/each}
+    </div>
 
     <section class="board">
       <div class="board-head">
         <div>
-          <p class="section-label">交互时间轴</p>
           <h2>{boardHeading}</h2>
         </div>
 
         <div class="board-head-side">
-          <p class="board-note">{boardNote}</p>
           <div class="board-head-actions">
             <div class="mode-switcher" role="tablist" aria-label="时间轴模式切换">
               <button
@@ -1155,8 +1337,8 @@
                 编辑模式
               </button>
             </div>
-            <button class="toolbar-action" type="button" onclick={openSettings}>
-              全局设置
+            <button class="toolbar-action" type="button" onclick={openCreateWorldview}>
+              新增世界观
             </button>
             <button class="toolbar-action toolbar-primary" type="button" onclick={openCreateEvent}>
               新建事件
@@ -1165,29 +1347,7 @@
         </div>
       </div>
 
-      <div class="board-toolbar board-toolbar-extended">
-        <div class="worldview-panel">
-          <span class="toolbar-label">世界观</span>
-          <div class="worldview-tabs" role="tablist" aria-label="世界观切换">
-            {#each worldviewOptions as worldview}
-              <button
-                class:is-current={selectedWorldview === worldview}
-                class="worldview-tab"
-                type="button"
-                role="tab"
-                aria-selected={selectedWorldview === worldview}
-                onclick={() => changeWorldview(worldview)}
-              >
-                {worldview}
-              </button>
-            {/each}
-
-            {#if worldviewOptions.length === 0}
-              <span class="empty-worldview">请先新建事件</span>
-            {/if}
-          </div>
-        </div>
-
+      <div class="board-toolbar">
         <div class="toolbar-stack">
           <label class="zoom-panel" for="timeline-zoom">
             <span class="toolbar-label">时间缩放</span>
@@ -1205,37 +1365,83 @@
             </div>
           </label>
 
-          <div class="mode-panel">
-            <span class="toolbar-label">布局规则</span>
-            <p>{modeDescription}</p>
-          </div>
         </div>
 
-        <div class="track-panel">
+        <div bind:this={tagFilterContainerElement} class="track-panel">
           <div class="track-panel-head">
-            <div>
-              <span class="toolbar-label">固定轨道</span>
-              <p>展示模式和编辑模式都沿用同一套固定轨道与颜色，仅编辑模式开放轨道配置。</p>
+            <div class="track-panel-actions">
+              <button class="toolbar-action" type="button" onclick={toggleTagFilterPanel}>
+                标签筛选 {selectedTagFilters.length > 0 ? `(${selectedTagFilters.length})` : ''}
+              </button>
+              {#if timelineMode === 'edit'}
+                <button class="toolbar-action" type="button" onclick={addTrack}>新增轨道</button>
+              {/if}
             </div>
-            {#if timelineMode === 'edit'}
-              <button class="toolbar-action" type="button" onclick={addTrack}>新增轨道</button>
-            {/if}
           </div>
 
-          <div class="track-editor-list">
-            {#each timelineTracks as track, index (track.id)}
-              <div class="track-editor-item" style={`--track-color:${track.color};`}>
-                <span class="track-editor-name">{track.label}</span>
-                <div class="track-editor-controls">
-                  <input
-                    aria-label={`${track.label} 颜色`}
-                    type="color"
-                    value={track.color}
-                    disabled={timelineMode !== 'edit'}
-                    oninput={(event) =>
-                      updateTrackColor(track.id, (event.currentTarget as HTMLInputElement).value)}
-                  />
-                  {#if timelineMode === 'edit'}
+          {#if isTagFilterOpen}
+            <div
+              class="tag-filter-panel tag-filter-inline"
+              in:seaFogIn={{ delay: 0, duration: 220 }}
+              out:seaFogOut={{ duration: 180 }}
+            >
+              <div class="tag-filter-head">
+                <span class="toolbar-label">标签筛选</span>
+                <div class="tag-filter-actions">
+                  <div class="tag-filter-mode" role="tablist" aria-label="标签筛选模式">
+                    <button
+                      class:is-current={tagFilterMode === 'highlight'}
+                      class="tag-mode-switch"
+                      type="button"
+                      onclick={() => (tagFilterMode = 'highlight')}
+                    >
+                      高亮
+                    </button>
+                    <button
+                      class:is-current={tagFilterMode === 'hide'}
+                      class="tag-mode-switch"
+                      type="button"
+                      onclick={() => (tagFilterMode = 'hide')}
+                    >
+                      隐藏
+                    </button>
+                  </div>
+                  <button class="toolbar-ghost" type="button" onclick={clearTagFilters}>清空</button>
+                </div>
+              </div>
+
+              <div class="tag-filter-list" aria-label="标签多选筛选">
+                {#each availableTags as tag}
+                  <button
+                    class:is-selected={selectedTagFilters.includes(tag)}
+                    class="tag-filter-chip"
+                    type="button"
+                    onclick={() => toggleTagFilter(tag)}
+                  >
+                    {tag}
+                  </button>
+                {/each}
+
+                {#if availableTags.length === 0}
+                  <span class="empty-worldview">当前世界观暂无标签</span>
+                {/if}
+              </div>
+            </div>
+          {/if}
+
+          {#if timelineMode === 'edit'}
+            <div class="track-editor-list">
+              {#each timelineTracks as track, index (track.id)}
+                <div class="track-editor-item" style={`--track-color:${track.color};`}>
+                  <span class="track-editor-name">{track.label}</span>
+                  <div class="track-editor-controls">
+                    <input
+                      aria-label={`${track.label} 颜色`}
+                      type="color"
+                      value={track.color}
+                      oninput={(event) =>
+                        updateTrackColor(track.id, (event.currentTarget as HTMLInputElement).value)}
+                    />
                     <button
                       class="track-delete"
                       type="button"
@@ -1244,11 +1450,11 @@
                     >
                       删除
                     </button>
-                  {/if}
+                  </div>
                 </div>
-              </div>
-            {/each}
-          </div>
+              {/each}
+            </div>
+          {/if}
         </div>
       </div>
 
@@ -1304,7 +1510,6 @@
                 muted={event.muted}
                 onBlurCard={() => (hoveredEventId = '')}
                 onDeleteCard={() => deleteEvent(event.id)}
-                onEditCard={() => openEditEvent(event)}
                 onFocusCard={() => (hoveredEventId = event.id)}
                 onMouseEnterCard={() => (hoveredEventId = event.id)}
                 onMouseLeaveCard={() => (hoveredEventId = '')}
@@ -1321,6 +1526,7 @@
                 showDetailsEntry={event.expanded}
                 showTrack={density.showTrack || timelineMode === 'edit'}
                 trackColor={event.trackColor}
+                trackLabel={event.trackLabel}
                 top={event.renderedTop}
                 width={event.renderedWidth}
               />
@@ -1329,16 +1535,6 @@
         </div>
       </div>
 
-      <div class="board-foot">
-        <span>固定轨道</span>
-        <span>新建事件</span>
-        <span>抽屉编辑</span>
-        <span>标签多选筛选</span>
-        <span>卡片拖拽改期</span>
-        <span>拖拽漫游</span>
-        <span>近刻度吸附</span>
-        <span>语义缩放</span>
-      </div>
     </section>
 
     {#if drawerMode !== 'none'}
@@ -1349,7 +1545,7 @@
           aria-label="关闭抽屉"
           onclick={closeDrawer}
         ></button>
-        <aside class="drawer-panel" aria-label={drawerMode === 'event' ? '事件编辑抽屉' : '全局设置抽屉'}>
+        <aside class="drawer-panel" aria-label={drawerMode === 'event' ? '事件编辑抽屉' : '新增世界观抽屉'}>
           {#if drawerMode === 'event'}
             <div class="drawer-header">
               <div>
@@ -1437,45 +1633,51 @@
                 </div>
               </form>
             </div>
-          {:else}
+          {:else if drawerMode === 'worldview'}
             <div class="drawer-header">
               <div>
-                <p class="section-label">全局设置</p>
-                <h3>页面文案与说明</h3>
+                <p class="section-label">世界观管理</p>
+                <h3>新增世界观</h3>
               </div>
-              <button class="toolbar-action" type="button" onclick={closeDrawer}>
-                完成
-              </button>
+              <button class="toolbar-action" type="button" onclick={closeDrawer}>关闭</button>
             </div>
 
             <div class="drawer-body">
-              <div class="drawer-form">
+              <form
+                class="drawer-form"
+                onsubmit={(event) => {
+                  event.preventDefault()
+                  saveWorldviewDraft()
+                }}
+              >
                 <label class="drawer-field">
-                  <span>主标题</span>
-                  <input bind:value={projectTitle} maxlength="40" type="text" />
+                  <span>世界观名称</span>
+                  <input bind:value={draftWorldviewName} maxlength="40" type="text" />
                 </label>
 
                 <label class="drawer-field">
-                  <span>首页导语</span>
-                  <textarea bind:value={projectLead} rows="4"></textarea>
+                  <span>简介</span>
+                  <textarea bind:value={draftWorldviewDescription} rows="4"></textarea>
                 </label>
 
                 <label class="drawer-field">
-                  <span>时间轴标题</span>
-                  <input bind:value={boardHeading} maxlength="40" type="text" />
+                  <span>标签</span>
+                  <textarea
+                    bind:value={draftWorldviewTagsText}
+                    placeholder="#主线，#地点，#主题"
+                    rows="3"
+                  ></textarea>
                 </label>
 
-                <label class="drawer-field">
-                  <span>时间轴说明</span>
-                  <textarea bind:value={boardNote} rows="4"></textarea>
-                </label>
+                <p class="drawer-hint">新增后会立即出现在顶部世界观下拉菜单，并同步用于时间轴与年龄编年页面。</p>
 
                 <div class="drawer-footer">
-                  <button class="toolbar-action toolbar-primary" type="button" onclick={closeDrawer}>
-                    完成
+                  <button class="toolbar-action" type="button" onclick={closeDrawer}>
+                    取消
                   </button>
+                  <button class="toolbar-action toolbar-primary" type="submit">保存世界观</button>
                 </div>
-              </div>
+              </form>
             </div>
           {/if}
         </aside>
@@ -1489,10 +1691,12 @@
     </datalist>
   {:else if activePage === 'age-chronicle'}
     <AgeChroniclePage
-      worldviewDescription={currentWorldviewTheme.description}
+      worldviewDescription={activeWorldviewContent.description}
       worldviewHasCover={currentWorldviewTheme.coverImage !== ''}
       worldviewName={activeWorldviewName}
-      worldviewTags={currentWorldviewTheme.coverLabel.split('/').map((segment) => segment.trim()).filter(Boolean)}
+      worldviewTags={activeWorldviewContent.tags}
+      worldviewThemeStyle={themeStyle}
+      worldviewTransitionKey={activeWorldviewName}
     />
   {:else}
     <EventDetailPage
@@ -1502,56 +1706,5 @@
       onSave={saveDetailEvent}
       worldviewName={activeWorldviewName}
     />
-  {/if}
-
-  {#if activePage === 'timeline'}
-    <aside class="tag-filter-panel tag-filter-floating">
-      <div class="tag-filter-head">
-        <span class="toolbar-label">标签筛选</span>
-        <div class="tag-filter-actions">
-          <div class="tag-filter-mode" role="tablist" aria-label="标签筛选模式">
-            <button
-              class:is-current={tagFilterMode === 'highlight'}
-              class="tag-mode-switch"
-              type="button"
-              onclick={() => (tagFilterMode = 'highlight')}
-            >
-              高亮
-            </button>
-            <button
-              class:is-current={tagFilterMode === 'hide'}
-              class="tag-mode-switch"
-              type="button"
-              onclick={() => (tagFilterMode = 'hide')}
-            >
-              隐藏
-            </button>
-          </div>
-          <button class="toolbar-ghost" type="button" onclick={clearTagFilters}>清空</button>
-        </div>
-      </div>
-
-      <div class="tag-filter-summary">
-        <strong>{selectedTagFilters.length}</strong>
-        <span>当前命中标签</span>
-      </div>
-
-      <div class="tag-filter-list" aria-label="标签多选筛选">
-        {#each availableTags as tag}
-          <button
-            class:is-selected={selectedTagFilters.includes(tag)}
-            class="tag-filter-chip"
-            type="button"
-            onclick={() => toggleTagFilter(tag)}
-          >
-            {tag}
-          </button>
-        {/each}
-
-        {#if availableTags.length === 0}
-          <span class="empty-worldview">当前世界观暂无标签</span>
-        {/if}
-      </div>
-    </aside>
   {/if}
 </main>

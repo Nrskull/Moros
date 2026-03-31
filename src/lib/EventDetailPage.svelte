@@ -1,6 +1,7 @@
 <script lang="ts">
-  import BubbleMenu from '@tiptap/extension-bubble-menu'
+  import Color from '@tiptap/extension-color'
   import Highlight from '@tiptap/extension-highlight'
+  import { TextStyle } from '@tiptap/extension-text-style'
   import { Editor } from '@tiptap/core'
   import StarterKit from '@tiptap/starter-kit'
   import { onDestroy, onMount, tick } from 'svelte'
@@ -34,11 +35,25 @@
 
   let editor: Editor | null = null
   let editorElement: HTMLDivElement | null = null
-  let bubbleMenuElement: HTMLDivElement | null = null
   let imageFieldElement: HTMLInputElement | null = null
   let tagsFieldElement: HTMLTextAreaElement | null = null
   let editorRevision = 0
   let isApplyingExternalContent = false
+  let formatBrushState: {
+    bold: boolean
+    color: string | null
+    headingLevel: 2 | 3 | null
+    highlight: boolean
+    highlightColor: string | null
+    italic: boolean
+  } | null = null
+
+  const textColorPresets = [
+    { label: '正文灰', value: '#27313d' },
+    { label: '石板蓝', value: '#425468' },
+    { label: '墨绿', value: '#406455' },
+    { label: '棕红', value: '#8f5a54' },
+  ]
 
   function escapeHtml(text: string): string {
     return text
@@ -111,7 +126,7 @@
   async function initialiseEditor(): Promise<void> {
     await tick()
 
-    if (!editorElement || !bubbleMenuElement) {
+    if (!editorElement) {
       return
     }
 
@@ -119,6 +134,10 @@
     editor = new Editor({
       element: editorElement,
       extensions: [
+        TextStyle,
+        Color.configure({
+          types: ['textStyle'],
+        }),
         StarterKit.configure({
           heading: {
             levels: [2, 3],
@@ -126,15 +145,6 @@
         }),
         Highlight.configure({
           multicolor: true,
-        }),
-        BubbleMenu.configure({
-          element: bubbleMenuElement,
-          updateDelay: 50,
-          options: {
-            placement: 'top',
-            offset: 12,
-          },
-          shouldShow: ({ editor, from, to }) => editor.isFocused && from !== to,
         }),
       ],
       content: draftBodyHtml || '<p>这里还没有正文内容。</p>',
@@ -192,6 +202,79 @@
   function getPlainBodyText(): string {
     const text = editor?.getText().trim() ?? ''
     return text === '' ? '这里还没有正文内容。' : text
+  }
+
+  function captureFormatBrush(): void {
+    if (!editor) {
+      return
+    }
+
+    const headingLevel = editor.isActive('heading', { level: 2 })
+      ? 2
+      : editor.isActive('heading', { level: 3 })
+        ? 3
+        : null
+    const highlightAttributes = editor.getAttributes('highlight')
+    const textStyleAttributes = editor.getAttributes('textStyle')
+
+    formatBrushState = {
+      bold: editor.isActive('bold'),
+      color: typeof textStyleAttributes.color === 'string' ? textStyleAttributes.color : null,
+      headingLevel,
+      highlight: editor.isActive('highlight'),
+      highlightColor:
+        typeof highlightAttributes.color === 'string' ? highlightAttributes.color : '#fff1a8',
+      italic: editor.isActive('italic'),
+    }
+  }
+
+  function applyFormatBrush(): void {
+    if (!editor || !formatBrushState) {
+      return
+    }
+
+    const chain = editor
+      .chain()
+      .focus()
+      .unsetBold()
+      .unsetItalic()
+      .unsetHighlight()
+      .unsetColor()
+
+    if (formatBrushState.headingLevel) {
+      chain.setHeading({ level: formatBrushState.headingLevel })
+    } else {
+      chain.setParagraph()
+    }
+
+    if (formatBrushState.bold) {
+      chain.setBold()
+    }
+
+    if (formatBrushState.italic) {
+      chain.setItalic()
+    }
+
+    if (formatBrushState.highlight) {
+      chain.setHighlight({ color: formatBrushState.highlightColor ?? '#fff1a8' })
+    }
+
+    if (formatBrushState.color) {
+      chain.setColor(formatBrushState.color)
+    }
+
+    chain.run()
+    formatBrushState = null
+    editorRevision += 1
+  }
+
+  function toggleFormatBrush(): void {
+    if (formatBrushState) {
+      applyFormatBrush()
+      return
+    }
+
+    captureFormatBrush()
   }
 
   function saveDetailDraft(): void {
@@ -270,14 +353,14 @@
       <section class="detail-field detail-field-body">
         <div class="detail-body-head">
           <span class="detail-field-label">正文</span>
-          <p>格式操作只在划词后出现，保存按钮独立保留在页面级。</p>
+          <p>格式工具固定停留在正文框上方，保存按钮独立保留在页面级。</p>
         </div>
 
         <div class="detail-rich-editor">
-          <div bind:this={bubbleMenuElement} class="detail-bubble-menu" aria-label="富文本格式菜单">
+          <div class="detail-format-toolbar" aria-label="富文本格式菜单">
             <button
               class:is-active={editorRevision >= 0 && (editor?.isActive('bold') ?? false)}
-              class="detail-bubble-action"
+              class="detail-format-action"
               type="button"
               onclick={() => editor?.chain().focus().toggleBold().run()}
             >
@@ -285,7 +368,7 @@
             </button>
             <button
               class:is-active={editorRevision >= 0 && (editor?.isActive('italic') ?? false)}
-              class="detail-bubble-action"
+              class="detail-format-action"
               type="button"
               onclick={() => editor?.chain().focus().toggleItalic().run()}
             >
@@ -293,7 +376,7 @@
             </button>
             <button
               class:is-active={editorRevision >= 0 && (editor?.isActive('highlight') ?? false)}
-              class="detail-bubble-action"
+              class="detail-format-action"
               type="button"
               onclick={() => editor?.chain().focus().toggleHighlight({ color: '#fff1a8' }).run()}
             >
@@ -301,7 +384,7 @@
             </button>
             <button
               class:is-active={editorRevision >= 0 && (editor?.isActive('heading', { level: 2 }) ?? false)}
-              class="detail-bubble-action"
+              class="detail-format-action"
               type="button"
               onclick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
             >
@@ -309,11 +392,33 @@
             </button>
             <button
               class:is-active={editorRevision >= 0 && (editor?.isActive('heading', { level: 3 }) ?? false)}
-              class="detail-bubble-action"
+              class="detail-format-action"
               type="button"
               onclick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()}
             >
               标题 3
+            </button>
+            {#each textColorPresets as preset}
+              <button
+                class:is-active={
+                  editorRevision >= 0 &&
+                  ((editor?.getAttributes('textStyle').color as string | undefined) ?? '#27313d') ===
+                    preset.value
+                }
+                class="detail-format-action"
+                type="button"
+                onclick={() => editor?.chain().focus().setColor(preset.value).run()}
+              >
+                {preset.label}
+              </button>
+            {/each}
+            <button
+              class:is-active={formatBrushState !== null}
+              class="detail-format-action"
+              type="button"
+              onclick={toggleFormatBrush}
+            >
+              {formatBrushState ? '应用格式刷' : '格式刷'}
             </button>
           </div>
 
