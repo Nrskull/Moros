@@ -7,6 +7,7 @@
   } from './content/worldviews'
   import AgeChroniclePage from './lib/AgeChroniclePage.svelte'
   import EventDetailPage from './lib/EventDetailPage.svelte'
+  import LogWorkbenchPage from './lib/LogWorkbenchPage.svelte'
   import TimelineAxis from './lib/TimelineAxis.svelte'
   import TimelineEventCard from './lib/TimelineEventCard.svelte'
   import { mockEvents } from './lib/mock-events'
@@ -24,7 +25,7 @@
   } from './lib/worldview-themes'
 
   type ZoomDensityMode = 'overview' | 'compact' | 'detail'
-  type AppPage = 'timeline' | 'age-chronicle' | 'event-detail'
+  type AppPage = 'timeline' | 'age-chronicle' | 'log-workbench' | 'event-detail'
   type DrawerMode = 'none' | 'event' | 'worldview'
   type EventEditorMode = 'create' | 'edit'
   type EventDragMode = 'move' | 'resize-end'
@@ -771,6 +772,18 @@
   $: activeWorldviewContent = resolveWorldviewContent(activeWorldviewName)
   $: currentWorldviewTheme = getWorldviewTheme(activeWorldviewName)
   $: themeStyle = createWorldviewThemeStyle(currentWorldviewTheme)
+  $: logWorldviewCards = worldviewOptions.map((worldview) => {
+    const worldviewContent = resolveWorldviewContent(worldview)
+    const worldviewTheme = getWorldviewTheme(worldview)
+
+    return {
+      description: worldviewContent.description,
+      hasCover: worldviewTheme.coverImage !== '',
+      name: worldview,
+      tags: worldviewContent.tags,
+      themeStyle: createWorldviewThemeStyle(worldviewTheme),
+    }
+  })
   $: activeTimelineHeroScene = {
     isPlain: currentWorldviewTheme.coverImage === '',
     key: activeWorldviewName,
@@ -1215,7 +1228,7 @@
   <title>{projectTitle}</title>
   <meta
     name="description"
-    content="使用 Svelte 构建的本地优先各种跑团时间轴与角色年龄编年原型。"
+    content="使用 Svelte 构建的本地优先各种跑团时间轴、角色年龄编年与日志工坊原型。"
   />
 </svelte:head>
 
@@ -1244,6 +1257,14 @@
         onclick={() => (activePage = 'age-chronicle')}
       >
         角色年龄编年
+      </button>
+      <button
+        class:is-current={activePage === 'log-workbench'}
+        class="page-switch"
+        type="button"
+        onclick={() => (activePage = 'log-workbench')}
+      >
+        日志展示
       </button>
       {#if activePage === 'event-detail'}
         <button class:is-current={true} class="page-switch" type="button">
@@ -1691,6 +1712,17 @@
     </datalist>
   {:else if activePage === 'age-chronicle'}
     <AgeChroniclePage
+      worldviewDescription={activeWorldviewContent.description}
+      worldviewHasCover={currentWorldviewTheme.coverImage !== ''}
+      worldviewName={activeWorldviewName}
+      worldviewTags={activeWorldviewContent.tags}
+      worldviewThemeStyle={themeStyle}
+      worldviewTransitionKey={activeWorldviewName}
+    />
+  {:else if activePage === 'log-workbench'}
+    <LogWorkbenchPage
+      initialWorldviewName={activeWorldviewName}
+      worldviewCards={logWorldviewCards}
       worldviewDescription={activeWorldviewContent.description}
       worldviewHasCover={currentWorldviewTheme.coverImage !== ''}
       worldviewName={activeWorldviewName}
