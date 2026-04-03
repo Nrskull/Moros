@@ -35,9 +35,11 @@ export function buildChatWebSocketUrl(): string {
 
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const host = window.location.hostname
-  const port = import.meta.env.VITE_CHAT_PORT?.trim() || DEFAULT_CHAT_PORT
-
-  return `${protocol}://${host}:${port}/ws`
+  if (import.meta.env.DEV) {
+      const port = import.meta.env.VITE_CHAT_PORT?.trim() || DEFAULT_CHAT_PORT
+      return `${protocol}://${host}:${port}/ws`
+    }
+  return `${protocol}://${host}/ws`
 }
 
 export function createChatSessionId(): string {
