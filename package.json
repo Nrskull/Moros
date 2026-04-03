@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host 0.0.0.0",
+    "chat": "node server/chat-server.js",
+    "chat:lan": "CHAT_HOST=0.0.0.0 node server/chat-server.js",
+    "lan": "concurrently -k -n chat,web \"npm:chat:lan\" \"npm:dev:lan\"",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json"
@@ -25,6 +29,9 @@
     "@tiptap/extension-highlight": "^3.21.0",
     "@tiptap/extension-text-style": "^3.21.0",
     "@tiptap/pm": "^3.21.0",
-    "@tiptap/starter-kit": "^3.21.0"
+    "@tiptap/starter-kit": "^3.21.0",
+    "better-sqlite3": "^12.8.0",
+    "concurrently": "^9.2.1",
+    "ws": "^8.20.0"
   }
 }

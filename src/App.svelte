@@ -1,17 +1,20 @@
 <script lang="ts">
   import { spring } from 'svelte/motion'
+  import { fade } from 'svelte/transition'
   import {
     worldviewContents,
     getWorldviewContent,
     type WorldviewContent,
   } from './content/worldviews'
   import AgeChroniclePage from './lib/AgeChroniclePage.svelte'
+  import ChatRoomPage from './lib/ChatRoomPage.svelte'
   import EventDetailPage from './lib/EventDetailPage.svelte'
   import LogWorkbenchPage from './lib/LogWorkbenchPage.svelte'
   import TimelineAxis from './lib/TimelineAxis.svelte'
   import TimelineEventCard from './lib/TimelineEventCard.svelte'
+  import WorldviewHero from './lib/WorldviewHero.svelte'
   import { mockEvents } from './lib/mock-events'
-  import { cardDeckIn, cardDeckOut, seaFogIn, seaFogOut } from './lib/transitions'
+  import { seaFogIn, seaFogOut } from './lib/transitions'
   import {
     createAdaptiveTimelineTicks,
     createTimelineLayout,
@@ -22,10 +25,11 @@
   import {
     createWorldviewThemeStyle,
     getWorldviewTheme,
+    type WorldviewTheme,
   } from './lib/worldview-themes'
 
   type ZoomDensityMode = 'overview' | 'compact' | 'detail'
-  type AppPage = 'timeline' | 'age-chronicle' | 'log-workbench' | 'event-detail'
+  type AppPage = 'timeline' | 'age-chronicle' | 'log-workbench' | 'chat-room' | 'event-detail'
   type DrawerMode = 'none' | 'event' | 'worldview'
   type EventEditorMode = 'create' | 'edit'
   type EventDragMode = 'move' | 'resize-end'
@@ -277,6 +281,7 @@
   let draftWorldviewName = ''
   let draftWorldviewDescription = ''
   let draftWorldviewTagsText = ''
+  let draftWorldviewCoverImage = ''
 
   let eventDragId = ''
   let eventDragMode: EventDragMode = 'move'
@@ -495,6 +500,7 @@
     draftWorldviewName = ''
     draftWorldviewDescription = ''
     draftWorldviewTagsText = '#世界观'
+    draftWorldviewCoverImage = ''
   }
 
   function openCreateEvent(): void {
@@ -506,6 +512,7 @@
 
   function openCreateWorldview(): void {
     resetWorldviewDraft()
+    isWorldviewMenuOpen = false
     drawerMode = 'worldview'
     editingEventId = ''
   }
@@ -519,6 +526,7 @@
     const name = draftWorldviewName.trim()
     const description = draftWorldviewDescription.trim()
     const tags = serialiseTags(draftWorldviewTagsText)
+    const coverImage = draftWorldviewCoverImage.trim()
 
     if (name === '') {
       return
@@ -536,6 +544,7 @@
       {
         name,
         description: description || '这是一个新建世界观，简介尚待补充。',
+        coverImage,
         tags,
       },
     ]
@@ -651,6 +660,24 @@
 
   function resolveWorldviewContent(name: string): WorldviewContent {
     return customWorldviews.find((entry) => entry.name === name) ?? getWorldviewContent(name)
+  }
+
+  function resolveWorldviewTheme(name: string): WorldviewTheme {
+    const baseTheme = getWorldviewTheme(name)
+    const customWorldview = customWorldviews.find((entry) => entry.name === name)
+
+    if (!customWorldview) {
+      return baseTheme
+    }
+
+    const coverImage = customWorldview.coverImage?.trim() ?? ''
+
+    return {
+      ...baseTheme,
+      coverImage,
+      coverLabel: coverImage ? `${name} / 自定义封面` : baseTheme.coverLabel,
+      description: customWorldview.description || baseTheme.description,
+    }
   }
 
   function normaliseIntervalEnd(start: number, end: number): number {
@@ -770,11 +797,11 @@
   })
   $: activeWorldviewName = selectedWorldview || worldviewOptions[0] || DEFAULT_WORLDVIEW_NAME
   $: activeWorldviewContent = resolveWorldviewContent(activeWorldviewName)
-  $: currentWorldviewTheme = getWorldviewTheme(activeWorldviewName)
+  $: currentWorldviewTheme = resolveWorldviewTheme(activeWorldviewName)
   $: themeStyle = createWorldviewThemeStyle(currentWorldviewTheme)
   $: logWorldviewCards = worldviewOptions.map((worldview) => {
     const worldviewContent = resolveWorldviewContent(worldview)
-    const worldviewTheme = getWorldviewTheme(worldview)
+    const worldviewTheme = resolveWorldviewTheme(worldview)
 
     return {
       description: worldviewContent.description,
@@ -784,13 +811,6 @@
       themeStyle: createWorldviewThemeStyle(worldviewTheme),
     }
   })
-  $: activeTimelineHeroScene = {
-    isPlain: currentWorldviewTheme.coverImage === '',
-    key: activeWorldviewName,
-    themeStyle,
-    worldviewContent: activeWorldviewContent,
-    worldviewName: activeWorldviewName,
-  }
   $: modeDescription =
     timelineMode === 'edit'
       ? '当前使用固定轨道，可直接新增轨道并调整轨道颜色。'
@@ -815,6 +835,9 @@
   }
   $: if (!timelineTracks.some((track) => track.id === draftTrackId)) {
     draftTrackId = timelineTracks[0]?.id ?? ''
+  }
+  $: if (activePage !== 'timeline' && drawerMode === 'event') {
+    closeDrawer()
   }
   $: if (
     activePage === 'event-detail' &&
@@ -1266,6 +1289,14 @@
       >
         日志展示
       </button>
+      <button
+        class:is-current={activePage === 'chat-room'}
+        class="page-switch"
+        type="button"
+        onclick={() => (activePage = 'chat-room')}
+      >
+        聊天室
+      </button>
       {#if activePage === 'event-detail'}
         <button class:is-current={true} class="page-switch" type="button">
           事件详情
@@ -1273,7 +1304,8 @@
       {/if}
     </nav>
 
-    <div bind:this={worldviewMenuElement} class="worldview-dropdown">
+    {#if activePage !== 'chat-room'}
+      <div bind:this={worldviewMenuElement} class="worldview-dropdown">
       <button
         aria-expanded={isWorldviewMenuOpen}
         class="worldview-dropdown-trigger"
@@ -1302,37 +1334,31 @@
               <span>{worldviewContent.description}</span>
             </button>
           {/each}
+
+          <div class="worldview-dropdown-divider" aria-hidden="true"></div>
+          <button class="worldview-dropdown-create" type="button" onclick={openCreateWorldview}>
+            + 新增世界观
+          </button>
         </div>
       {/if}
-    </div>
+      </div>
+    {/if}
   </div>
 
-  {#if activePage === 'timeline'}
-    <div class="worldview-stage worldview-stage-hero">
-      {#each [activeTimelineHeroScene] as scene (scene.key)}
-        <section
-          class:is-current={scene.key === activeWorldviewName}
-          class:is-plain={scene.isPlain}
-          class="hero-panel hero-panel-worldview worldview-layer"
-          style={scene.themeStyle}
-          in:cardDeckIn
-          out:cardDeckOut
-        >
-          <div class="hero-copy worldview-hero-copy">
-            <p class="eyebrow">当前世界观 / 故事时间轴</p>
-            <h1>{scene.worldviewName}</h1>
-            <p class="lede">{scene.worldviewContent.description}</p>
-            <div class="hero-pill-row" aria-label="当前世界观补充信息">
-              {#each scene.worldviewContent.tags as tag}
-                <span>{tag}</span>
-              {/each}
-            </div>
-          </div>
-        </section>
-      {/each}
-    </div>
+  <div class="page-scene-stack">
+    {#key activePage}
+      <div class="page-scene" in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}>
+    {#if activePage === 'timeline'}
+      <WorldviewHero
+        description={activeWorldviewContent.description}
+        hasCover={currentWorldviewTheme.coverImage !== ''}
+        name={activeWorldviewName}
+        tags={activeWorldviewContent.tags}
+        themeStyle={themeStyle}
+        transitionKey={activeWorldviewName}
+      />
 
-    <section class="board">
+      <section class="board">
       <div class="board-head">
         <div>
           <h2>{boardHeading}</h2>
@@ -1358,9 +1384,6 @@
                 编辑模式
               </button>
             </div>
-            <button class="toolbar-action" type="button" onclick={openCreateWorldview}>
-              新增世界观
-            </button>
             <button class="toolbar-action toolbar-primary" type="button" onclick={openCreateEvent}>
               新建事件
             </button>
@@ -1556,187 +1579,211 @@
         </div>
       </div>
 
-    </section>
+      </section>
 
-    {#if drawerMode !== 'none'}
-      <div class="drawer-backdrop">
+      {#if drawerMode === 'event'}
+        <div class="drawer-backdrop">
         <button
           class="drawer-dismiss"
           type="button"
           aria-label="关闭抽屉"
           onclick={closeDrawer}
         ></button>
-        <aside class="drawer-panel" aria-label={drawerMode === 'event' ? '事件编辑抽屉' : '新增世界观抽屉'}>
-          {#if drawerMode === 'event'}
-            <div class="drawer-header">
-              <div>
-                <p class="section-label">事件编辑</p>
-                <h3>{eventEditorMode === 'create' ? '新建事件' : '编辑事件'}</h3>
+          <aside class="drawer-panel" aria-label="事件编辑抽屉">
+          <div class="drawer-header">
+            <div>
+              <p class="section-label">事件编辑</p>
+              <h3>{eventEditorMode === 'create' ? '新建事件' : '编辑事件'}</h3>
+            </div>
+            <button class="toolbar-action" type="button" onclick={closeDrawer}>
+              关闭
+            </button>
+          </div>
+
+          <div class="drawer-body">
+            <form
+              class="drawer-form"
+              onsubmit={(event) => {
+                event.preventDefault()
+                saveDraftEvent()
+              }}
+            >
+              <label class="drawer-field">
+                <span>世界观</span>
+                <input bind:value={draftWorldview} list="worldview-options" type="text" />
+              </label>
+
+              <label class="drawer-field">
+                <span>标题</span>
+                <input bind:value={draftTitle} maxlength="80" type="text" />
+              </label>
+
+              <div class="drawer-field-row">
+                <label class="drawer-field">
+                  <span>开始时间</span>
+                  <input bind:value={draftStartTime} min="0" step="1" type="number" />
+                </label>
+
+                <label class="drawer-field">
+                  <span>结束时间</span>
+                  <input bind:value={draftEndTime} min="0" step="1" type="number" />
+                </label>
               </div>
-              <button class="toolbar-action" type="button" onclick={closeDrawer}>
-                关闭
-              </button>
-            </div>
 
-            <div class="drawer-body">
-              <form
-                class="drawer-form"
-                onsubmit={(event) => {
-                  event.preventDefault()
-                  saveDraftEvent()
-                }}
-              >
-                <label class="drawer-field">
-                  <span>世界观</span>
-                  <input bind:value={draftWorldview} list="worldview-options" type="text" />
-                </label>
+              <label class="drawer-field">
+                <span>所在轨道</span>
+                <select bind:value={draftTrackId}>
+                  {#each timelineTracks as track}
+                    <option value={track.id}>{track.label}</option>
+                  {/each}
+                </select>
+              </label>
 
-                <label class="drawer-field">
-                  <span>标题</span>
-                  <input bind:value={draftTitle} maxlength="80" type="text" />
-                </label>
+              <label class="drawer-field">
+                <span>摘要</span>
+                <textarea
+                  bind:value={draftSummary}
+                  placeholder="可留空，保存时会自动根据正文生成摘要。"
+                  rows="3"
+                ></textarea>
+              </label>
 
-                <div class="drawer-field-row">
-                  <label class="drawer-field">
-                    <span>开始时间</span>
-                    <input bind:value={draftStartTime} min="0" step="1" type="number" />
-                  </label>
+              <label class="drawer-field">
+                <span>正文</span>
+                <textarea
+                  bind:value={draftBody}
+                  placeholder="这里先用富文本近似的多行正文承接 Phase 3，后续再接 Markdown 编辑器。"
+                  rows="7"
+                ></textarea>
+              </label>
 
-                  <label class="drawer-field">
-                    <span>结束时间</span>
-                    <input bind:value={draftEndTime} min="0" step="1" type="number" />
-                  </label>
-                </div>
+              <label class="drawer-field">
+                <span>标签</span>
+                <textarea
+                  bind:value={draftTagsText}
+                  placeholder="#主线，#角色，#线索"
+                  rows="2"
+                ></textarea>
+              </label>
 
-                <label class="drawer-field">
-                  <span>所在轨道</span>
-                  <select bind:value={draftTrackId}>
-                    {#each timelineTracks as track}
-                      <option value={track.id}>{track.label}</option>
-                    {/each}
-                  </select>
-                </label>
-
-                <label class="drawer-field">
-                  <span>摘要</span>
-                  <textarea
-                    bind:value={draftSummary}
-                    placeholder="可留空，保存时会自动根据正文生成摘要。"
-                    rows="3"
-                  ></textarea>
-                </label>
-
-                <label class="drawer-field">
-                  <span>正文</span>
-                  <textarea
-                    bind:value={draftBody}
-                    placeholder="这里先用富文本近似的多行正文承接 Phase 3，后续再接 Markdown 编辑器。"
-                    rows="7"
-                  ></textarea>
-                </label>
-
-                <label class="drawer-field">
-                  <span>标签</span>
-                  <textarea
-                    bind:value={draftTagsText}
-                    placeholder="#主线，#角色，#线索"
-                    rows="2"
-                  ></textarea>
-                </label>
-
-                <div class="drawer-footer">
-                  <button class="toolbar-action" type="button" onclick={closeDrawer}>
-                    取消
-                  </button>
-                  <button class="toolbar-action toolbar-primary" type="submit">
-                    保存事件
-                  </button>
-                </div>
-              </form>
-            </div>
-          {:else if drawerMode === 'worldview'}
-            <div class="drawer-header">
-              <div>
-                <p class="section-label">世界观管理</p>
-                <h3>新增世界观</h3>
+              <div class="drawer-footer">
+                <button class="toolbar-action" type="button" onclick={closeDrawer}>
+                  取消
+                </button>
+                <button class="toolbar-action toolbar-primary" type="submit">
+                  保存事件
+                </button>
               </div>
-              <button class="toolbar-action" type="button" onclick={closeDrawer}>关闭</button>
-            </div>
+            </form>
+          </div>
+          </aside>
+        </div>
+      {/if}
 
-            <div class="drawer-body">
-              <form
-                class="drawer-form"
-                onsubmit={(event) => {
-                  event.preventDefault()
-                  saveWorldviewDraft()
-                }}
-              >
-                <label class="drawer-field">
-                  <span>世界观名称</span>
-                  <input bind:value={draftWorldviewName} maxlength="40" type="text" />
-                </label>
-
-                <label class="drawer-field">
-                  <span>简介</span>
-                  <textarea bind:value={draftWorldviewDescription} rows="4"></textarea>
-                </label>
-
-                <label class="drawer-field">
-                  <span>标签</span>
-                  <textarea
-                    bind:value={draftWorldviewTagsText}
-                    placeholder="#主线，#地点，#主题"
-                    rows="3"
-                  ></textarea>
-                </label>
-
-                <p class="drawer-hint">新增后会立即出现在顶部世界观下拉菜单，并同步用于时间轴与年龄编年页面。</p>
-
-                <div class="drawer-footer">
-                  <button class="toolbar-action" type="button" onclick={closeDrawer}>
-                    取消
-                  </button>
-                  <button class="toolbar-action toolbar-primary" type="submit">保存世界观</button>
-                </div>
-              </form>
-            </div>
-          {/if}
-        </aside>
-      </div>
-    {/if}
-
-    <datalist id="worldview-options">
+      <datalist id="worldview-options">
       {#each worldviewOptions as worldview}
         <option value={worldview}></option>
       {/each}
-    </datalist>
-  {:else if activePage === 'age-chronicle'}
-    <AgeChroniclePage
-      worldviewDescription={activeWorldviewContent.description}
-      worldviewHasCover={currentWorldviewTheme.coverImage !== ''}
-      worldviewName={activeWorldviewName}
-      worldviewTags={activeWorldviewContent.tags}
-      worldviewThemeStyle={themeStyle}
-      worldviewTransitionKey={activeWorldviewName}
-    />
-  {:else if activePage === 'log-workbench'}
-    <LogWorkbenchPage
-      initialWorldviewName={activeWorldviewName}
-      worldviewCards={logWorldviewCards}
-      worldviewDescription={activeWorldviewContent.description}
-      worldviewHasCover={currentWorldviewTheme.coverImage !== ''}
-      worldviewName={activeWorldviewName}
-      worldviewTags={activeWorldviewContent.tags}
-      worldviewThemeStyle={themeStyle}
-      worldviewTransitionKey={activeWorldviewName}
-    />
-  {:else}
-    <EventDetailPage
-      event={timelineEvents.find((event) => event.id === detailEventId) ?? null}
-      onBack={closeEventDetail}
-      onDelete={deleteFromDetailPage}
-      onSave={saveDetailEvent}
-      worldviewName={activeWorldviewName}
-    />
+      </datalist>
+    {:else if activePage === 'age-chronicle'}
+      <AgeChroniclePage
+        worldviewDescription={activeWorldviewContent.description}
+        worldviewHasCover={currentWorldviewTheme.coverImage !== ''}
+        worldviewName={activeWorldviewName}
+        worldviewTags={activeWorldviewContent.tags}
+        worldviewThemeStyle={themeStyle}
+        worldviewTransitionKey={activeWorldviewName}
+      />
+    {:else if activePage === 'log-workbench'}
+      <LogWorkbenchPage
+        initialWorldviewName={activeWorldviewName}
+        worldviewCards={logWorldviewCards}
+        worldviewDescription={activeWorldviewContent.description}
+        worldviewHasCover={currentWorldviewTheme.coverImage !== ''}
+        worldviewName={activeWorldviewName}
+        worldviewTags={activeWorldviewContent.tags}
+        worldviewThemeStyle={themeStyle}
+        worldviewTransitionKey={activeWorldviewName}
+      />
+    {:else if activePage === 'chat-room'}
+      <ChatRoomPage />
+    {:else}
+      <EventDetailPage
+        event={timelineEvents.find((event) => event.id === detailEventId) ?? null}
+        onBack={closeEventDetail}
+        onDelete={deleteFromDetailPage}
+        onSave={saveDetailEvent}
+        worldviewName={activeWorldviewName}
+      />
+    {/if}
+      </div>
+    {/key}
+  </div>
+
+  {#if drawerMode === 'worldview'}
+    <div class="drawer-backdrop">
+      <button
+        class="drawer-dismiss"
+        type="button"
+        aria-label="关闭抽屉"
+        onclick={closeDrawer}
+      ></button>
+      <aside class="drawer-panel" aria-label="新增世界观抽屉">
+        <div class="drawer-header">
+          <div>
+            <p class="section-label">世界观管理</p>
+            <h3>新增世界观</h3>
+          </div>
+          <button class="toolbar-action" type="button" onclick={closeDrawer}>关闭</button>
+        </div>
+
+        <div class="drawer-body">
+          <form
+            class="drawer-form"
+            onsubmit={(event) => {
+              event.preventDefault()
+              saveWorldviewDraft()
+            }}
+          >
+            <label class="drawer-field">
+              <span>世界观名称</span>
+              <input bind:value={draftWorldviewName} maxlength="40" type="text" />
+            </label>
+
+            <label class="drawer-field">
+              <span>简介</span>
+              <textarea bind:value={draftWorldviewDescription} rows="4"></textarea>
+            </label>
+
+            <label class="drawer-field">
+              <span>标签</span>
+              <textarea
+                bind:value={draftWorldviewTagsText}
+                placeholder="#主线，#地点，#主题"
+                rows="3"
+              ></textarea>
+            </label>
+
+            <label class="drawer-field">
+              <span>配图地址</span>
+              <input
+                bind:value={draftWorldviewCoverImage}
+                placeholder="/background.jpg"
+                type="text"
+              />
+            </label>
+
+            <p class="drawer-hint">新增后会立即出现在顶部世界观下拉菜单，并同步用于时间轴与年龄编年页面。</p>
+
+            <div class="drawer-footer">
+              <button class="toolbar-action" type="button" onclick={closeDrawer}>
+                取消
+              </button>
+              <button class="toolbar-action toolbar-primary" type="submit">保存世界观</button>
+            </div>
+          </form>
+        </div>
+      </aside>
+    </div>
   {/if}
 </main>

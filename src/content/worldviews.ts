@@ -1,4 +1,5 @@
 export interface WorldviewContent {
+  coverImage?: string
   description: string
   name: string
   tags: string[]
@@ -24,6 +25,7 @@ export function getWorldviewContent(name: string): WorldviewContent {
     worldviewContentMap.get(name) ?? {
       name,
       description: '当前世界观尚未配置独立简介，后续可在 /src/content/ 配置文件中补充。',
+      coverImage: '',
       tags: [],
     }
   )

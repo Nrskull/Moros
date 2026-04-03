@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte'
+  import { slide } from 'svelte/transition'
   import {
     CHARACTER_COLOR_POOL,
     createEditedLogFilename,
@@ -92,7 +93,10 @@
   let downloadFilename = createEditedLogFilename(SAMPLE_FILE_NAME)
   let downloadUrl = ''
   let hasSeededSample = false
-  let isCharacterManagerOpen = true
+  let isCharacterManagerOpen = false
+  let isDisplaySettingsOpen = false
+  let isBodyOnlyMode = false
+  let pageJumpDraft = '1'
 
   let playbackIndex = 0
   let playbackSpeed = 1
@@ -248,6 +252,10 @@
     return sorted[0]?.[0] ?? list[0]?.nickname ?? '主要角色'
   }
 
+  function isNarrativeBodyEntry(entry: EditableLogEntry): boolean {
+    return !entry.isOoc && !entry.hasCqImage
+  }
+
   function getNextLogSequence(worldview: string, primaryCharacter: string): number {
     return (
       logRecords
@@ -330,6 +338,10 @@
     characterVisibility = { ...record.characterVisibility }
     characterNameDrafts = {}
     currentPage = 1
+    pageJumpDraft = '1'
+    isBodyOnlyMode = false
+    isCharacterManagerOpen = false
+    isDisplaySettingsOpen = false
     playbackIndex = 0
     playbackCursor = 0
     playbackCursorEntryId = ''
@@ -471,7 +483,6 @@
       })
 
       logRecords = [record]
-      expandedWorldview = worldview
       loadError = ''
     } catch (error) {
       loadError = error instanceof Error ? error.message : '示例日志读取失败。'
@@ -610,7 +621,39 @@
 
   function changeEditPage(nextPage: number): void {
     currentPage = clamp(nextPage, 1, totalPages)
+    pageJumpDraft = String(currentPage)
     scrollEditPaneToTop()
+  }
+
+  function updateEditPageSize(value: string): void {
+    const nextPageSize = Number(value)
+
+    if (!PAGE_SIZE_OPTIONS.includes(nextPageSize)) {
+      return
+    }
+
+    pageSize = nextPageSize
+    changeEditPage(1)
+  }
+
+  function jumpToEditPage(): void {
+    const parsed = Number(pageJumpDraft)
+
+    if (!Number.isFinite(parsed)) {
+      pageJumpDraft = String(currentPage)
+      return
+    }
+
+    changeEditPage(Math.round(parsed))
+  }
+
+  function handlePageJumpKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Enter') {
+      return
+    }
+
+    event.preventDefault()
+    jumpToEditPage()
   }
 
   function isEntryModified(entry: EditableLogEntry): boolean {
@@ -952,12 +995,8 @@
   $: fallbackWorldviewCard = createFallbackWorldviewCard()
   $: worldviewTransitionKey
   $: logWorldviewCards = worldviewCards.length > 0 ? worldviewCards : [fallbackWorldviewCard]
-  $: if (expandedWorldview === '' && logWorldviewCards.length > 0) {
-    expandedWorldview =
-      logWorldviewCards.find((card) => card.name === initialWorldviewName)?.name ?? logWorldviewCards[0].name
-  }
   $: if (expandedWorldview !== '' && !logWorldviewCards.some((card) => card.name === expandedWorldview)) {
-    expandedWorldview = logWorldviewCards[0]?.name ?? ''
+    expandedWorldview = ''
   }
 
   $: worldviewDirectory = logWorldviewCards.map((card) => ({
@@ -996,14 +1035,22 @@
 
   $: characterControls = buildCharacterControls(entries, characterColors, characterVisibility)
   $: visibleEntries = entries.filter((entry) => characterVisibility[entry.speakerKey] !== false)
+  $: displayEntries = isBodyOnlyMode ? visibleEntries.filter(isNarrativeBodyEntry) : visibleEntries
   $: retainedEntries = entries.filter((entry) => entry.keep)
   $: retainedVisibleEntries = visibleEntries.filter((entry) => entry.keep)
   $: totalEntries = entries.length
-  $: visibleEntryCount = visibleEntries.length
-  $: totalPages = Math.max(1, Math.ceil(visibleEntries.length / pageSize))
-  $: currentPage = clamp(currentPage, 1, totalPages)
+  $: visibleEntryCount = displayEntries.length
+  $: totalPages = Math.max(1, Math.ceil(displayEntries.length / pageSize))
+  $: {
+    const nextCurrentPage = clamp(currentPage, 1, totalPages)
+
+    if (nextCurrentPage !== currentPage) {
+      currentPage = nextCurrentPage
+      pageJumpDraft = String(nextCurrentPage)
+    }
+  }
   $: pageStart = (currentPage - 1) * pageSize
-  $: pageEntries = visibleEntries.slice(pageStart, pageStart + pageSize)
+  $: pageEntries = displayEntries.slice(pageStart, pageStart + pageSize)
   $: modifiedEntryCount = entries.reduce((count, entry) => count + Number(isEntryModified(entry)), 0)
   $: serialisedData = sourceLog ? serialiseSealDiceStandardLog(sourceLog, entries) : null
   $: serialisedLogText = serialisedData ? JSON.stringify(serialisedData, null, 2) : ''
@@ -1071,7 +1118,6 @@
   <section class="board log-board">
     <div class="board-head">
       <div>
-        <p class="section-label">读取 / 管理 / 编辑 / 播放</p>
         {#if view !== 'edit'}
           <!-- <h2>{view === 'overview' ? 'log展示页' : 'log播放页'}</h2> -->
         {/if}
@@ -1081,51 +1127,51 @@
           {:else if activeLogRecord && view === 'edit'}
             当前日志：{activeLogRecord.title}
           {:else if activeLogRecord}
-            当前日志：{activeLogRecord.title}。播放页保留 16:9 播放块、横排按钮、逐字显示与回顾面板。
+            当前日志：{activeLogRecord.title}。
           {:else}
             请选择一个 log 记录后再进入对应子页面。
           {/if}
         </p>
       </div>
 
-      <div class="board-head-side">
-        <div class="board-head-actions">
-          {#if view === 'overview'}
-            <button class="toolbar-action" type="button" onclick={seedSampleLog}>
-              {isLoadingSample ? '正在读取示例…' : '载入示例记录'}
-            </button>
-          {:else}
-            <button class="toolbar-action" type="button" onclick={returnToOverview}>返回展示页</button>
-
-            <div class="mode-switcher" role="tablist" aria-label="日志子页面模式切换">
-              <button
-                class:is-current={view === 'edit'}
-                class="mode-switch"
-                type="button"
-                onclick={() => (view = 'edit')}
-              >
-                编辑
+      {#if view === 'overview' || view === 'edit'}
+        <div class="board-head-side">
+          <div class="board-head-actions">
+            {#if view === 'overview'}
+              <button class="toolbar-action" type="button" onclick={seedSampleLog}>
+                {isLoadingSample ? '正在读取示例…' : '载入示例记录'}
               </button>
-              <button
-                class:is-current={view === 'play'}
-                class="mode-switch"
-                type="button"
-                onclick={() => (view = 'play')}
-              >
-                播放
-              </button>
-            </div>
-
-            {#if downloadUrl !== ''}
-              <a class="toolbar-action toolbar-primary log-download-link" download={downloadFilename} href={downloadUrl}>
-                下载修改版
-              </a>
             {:else}
-              <button class="toolbar-action toolbar-primary" disabled type="button">下载修改版</button>
+              <button class="toolbar-action" type="button" onclick={returnToOverview}>返回展示页</button>
+
+              <div class="mode-switcher" role="tablist" aria-label="日志子页面模式切换">
+                <button
+                  class="mode-switch is-current"
+                  type="button"
+                  onclick={() => (view = 'edit')}
+                >
+                  编辑
+                </button>
+                <button
+                  class="mode-switch"
+                  type="button"
+                  onclick={() => (view = 'play')}
+                >
+                  播放
+                </button>
+              </div>
+
+              {#if downloadUrl !== ''}
+                <a class="toolbar-action toolbar-primary log-download-link" download={downloadFilename} href={downloadUrl}>
+                  下载修改版
+                </a>
+              {:else}
+                <button class="toolbar-action toolbar-primary" disabled type="button">下载修改版</button>
+              {/if}
             {/if}
-          {/if}
+          </div>
         </div>
-      </div>
+      {/if}
     </div>
 
     <input
@@ -1143,47 +1189,38 @@
     {#if view === 'overview'}
       <div class="log-worldview-grid">
         {#each worldviewDirectory as worldview}
-          <article
-            class:is-expanded={expandedWorldview === worldview.name}
-            class:is-plain={!worldview.hasCover}
-            class="log-worldview-card"
-            style={worldview.themeStyle}
-          >
-            <button
-              aria-expanded={expandedWorldview === worldview.name}
-              class="log-worldview-summary"
-              type="button"
-              onclick={() => {
-                expandedWorldview = expandedWorldview === worldview.name ? '' : worldview.name
-              }}
-            >
-              <div class="log-worldview-copy">
-                <span class="section-label">世界观目录</span>
-                <strong>{worldview.name}</strong>
-                <p>{worldview.description}</p>
-              </div>
-
-              <div class="log-worldview-meta">
-                <div class="log-worldview-count">
-                  <strong>{worldview.logs.length}</strong>
-                  <span>份 log</span>
+          <article class:is-expanded={expandedWorldview === worldview.name} class="log-worldview-card" style={worldview.themeStyle}>
+            <section class:is-plain={!worldview.hasCover} class="log-worldview-stage">
+              <button
+                aria-expanded={expandedWorldview === worldview.name}
+                class="log-worldview-summary"
+                type="button"
+                onclick={() => {
+                  expandedWorldview = expandedWorldview === worldview.name ? '' : worldview.name
+                }}
+              >
+                <div class="log-worldview-copy">
+                  <span class="section-label">世界观目录</span>
+                  <strong>{worldview.name}</strong>
+                  <p>{worldview.description}</p>
                 </div>
-                <span class="log-worldview-toggle">{expandedWorldview === worldview.name ? '收起' : '展开'}</span>
-              </div>
-            </button>
 
-            <div class="log-worldview-tags" aria-label={`${worldview.name} 标签`}>
-              {#if worldview.tags.length > 0}
-                {#each worldview.tags as tag}
-                  <span>{tag}</span>
-                {/each}
-              {:else}
-                <span>待补标签</span>
-              {/if}
-            </div>
+                <div class="log-worldview-meta">
+                  <div class="log-worldview-count">
+                    <strong>{worldview.logs.length}</strong>
+                    <span>份 log</span>
+                  </div>
+                  <span class="log-worldview-toggle">{expandedWorldview === worldview.name ? '收起' : '展开'}</span>
+                </div>
+              </button>
+            </section>
 
             {#if expandedWorldview === worldview.name}
-              <div class="log-worldview-panel">
+              <div
+                class="log-worldview-panel"
+                in:slide={{ duration: 260 }}
+                out:slide={{ duration: 180 }}
+              >
                 <div class="log-worldview-list">
                   {#if worldview.logs.length === 0}
                     <div class="log-empty-inline">当前世界观下还没有 log 记录，直接从底部上传第一份即可。</div>
@@ -1276,7 +1313,7 @@
             {#if pageEntries.length === 0}
               <div class="log-empty-state">
                 <strong>当前没有可编辑的日志条目。</strong>
-                <p>你可能把所有角色都隐藏了，或者当前记录本身没有解析出正文条目。</p>
+                <p>你可能把所有角色都隐藏了，或者当前筛选条件下没有可显示的正文条目。</p>
               </div>
             {:else}
               <div class="log-entry-list">
@@ -1350,8 +1387,61 @@
           <aside class="log-side-column">
             <section class="log-pane log-side-card">
               <button
+                aria-expanded={isDisplaySettingsOpen}
+                class="log-side-accordion"
+                type="button"
+                onclick={() => (isDisplaySettingsOpen = !isDisplaySettingsOpen)}
+              >
+                <div>
+                  <strong>显示设置</strong>
+                  <span>控制编辑区的显示密度、每页条数和页码跳转。</span>
+                </div>
+                <span>{isDisplaySettingsOpen ? '收起' : '展开'}</span>
+              </button>
+
+              {#if isDisplaySettingsOpen}
+                <div class="log-display-settings">
+                  <label class="log-display-toggle">
+                    <input
+                      checked={isBodyOnlyMode}
+                      onchange={(event) => (isBodyOnlyMode = (event.currentTarget as HTMLInputElement).checked)}
+                      type="checkbox"
+                    />
+                    <span>仅显示正文</span>
+                  </label>
+
+                  <label class="log-page-size">
+                    <span>每页显示</span>
+                    <select onchange={(event) => updateEditPageSize((event.currentTarget as HTMLSelectElement).value)} value={pageSize}>
+                      {#each PAGE_SIZE_OPTIONS as option}
+                        <option value={option}>{option} 条</option>
+                      {/each}
+                    </select>
+                  </label>
+
+                  <div class="log-page-jump-setting">
+                    <label class="log-progress-field">
+                      <span>跳转页码</span>
+                      <input
+                        max={totalPages}
+                        min="1"
+                        oninput={(event) => (pageJumpDraft = (event.currentTarget as HTMLInputElement).value)}
+                        onkeydown={handlePageJumpKeydown}
+                        type="number"
+                        value={pageJumpDraft}
+                      />
+                    </label>
+
+                    <button class="toolbar-action" type="button" onclick={jumpToEditPage}>跳转</button>
+                  </div>
+                </div>
+              {/if}
+            </section>
+
+            <section class="log-pane log-side-card">
+              <button
                 aria-expanded={isCharacterManagerOpen}
-                class="log-character-accordion"
+                class="log-side-accordion"
                 type="button"
                 onclick={() => (isCharacterManagerOpen = !isCharacterManagerOpen)}
               >
@@ -1421,39 +1511,60 @@
       {:else}
         <div class="log-playback-pane">
           <div class="log-playback-toolbar">
-            <div class="log-playback-overview">
-              <span>
-                {#if playableEntries.length === 0}
-                  暂无可播放内容
-                {:else}
-                  当前可播放 {playableEntries.length} 条记录 · 第 {playbackPageIndex + 1} 页 / 共 {playbackPageCount} 页
-                {/if}
-              </span>
-            </div>
+            <div class="log-playback-toolbar-row">
+              <div class="log-playback-actions">
+                <button class="toolbar-action" type="button" onclick={() => stepPlayback(-1)}>上一条</button>
+                <button class="toolbar-action toolbar-primary" type="button" onclick={togglePlayback}>
+                  {isPlaying ? '暂停' : '播放'}
+                </button>
+                <button class="toolbar-action" type="button" onclick={() => stepPlayback(1)}>下一条</button>
+                <button class="toolbar-action" type="button" onclick={toggleReview}>
+                  {isReviewOpen ? '收起回顾' : '回顾'}
+                </button>
+                <button class="toolbar-action" type="button" onclick={resetPlayback}>回到开头</button>
+                <label class="log-speed-field log-speed-inline">
+                  <span>倍速</span>
+                  <select
+                    onchange={(event) => updatePlaybackSpeed((event.currentTarget as HTMLSelectElement).value)}
+                    value={String(playbackSpeed)}
+                  >
+                    <option value="0.5">0.5x</option>
+                    <option value="1">1x</option>
+                    <option value="1.5">1.5x</option>
+                    <option value="2">2x</option>
+                    <option value="3">3x</option>
+                  </select>
+                </label>
+              </div>
 
-            <div class="log-playback-actions">
-              <button class="toolbar-action" type="button" onclick={() => stepPlayback(-1)}>上一条</button>
-              <button class="toolbar-action toolbar-primary" type="button" onclick={togglePlayback}>
-                {isPlaying ? '暂停' : '播放'}
-              </button>
-              <button class="toolbar-action" type="button" onclick={() => stepPlayback(1)}>下一条</button>
-              <button class="toolbar-action" type="button" onclick={toggleReview}>
-                {isReviewOpen ? '收起回顾' : '回顾'}
-              </button>
-              <button class="toolbar-action" type="button" onclick={resetPlayback}>回到开头</button>
-              <label class="log-speed-field log-speed-inline">
-                <span>倍速</span>
-                <select
-                  onchange={(event) => updatePlaybackSpeed((event.currentTarget as HTMLSelectElement).value)}
-                  value={String(playbackSpeed)}
-                >
-                  <option value="0.5">0.5x</option>
-                  <option value="1">1x</option>
-                  <option value="1.5">1.5x</option>
-                  <option value="2">2x</option>
-                  <option value="3">3x</option>
-                </select>
-              </label>
+              <div class="log-view-actions">
+                <button class="toolbar-action" type="button" onclick={returnToOverview}>返回展示页</button>
+
+                <div class="mode-switcher" role="tablist" aria-label="日志子页面模式切换">
+                  <button
+                    class="mode-switch"
+                    type="button"
+                    onclick={() => (view = 'edit')}
+                  >
+                    编辑
+                  </button>
+                  <button
+                    class="mode-switch is-current"
+                    type="button"
+                    onclick={() => (view = 'play')}
+                  >
+                    播放
+                  </button>
+                </div>
+
+                {#if downloadUrl !== ''}
+                  <a class="toolbar-action toolbar-primary log-download-link" download={downloadFilename} href={downloadUrl}>
+                    下载修改版
+                  </a>
+                {:else}
+                  <button class="toolbar-action toolbar-primary" disabled type="button">下载修改版</button>
+                {/if}
+              </div>
             </div>
           </div>
 

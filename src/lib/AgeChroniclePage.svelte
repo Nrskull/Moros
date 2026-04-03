@@ -1,6 +1,6 @@
 <script lang="ts">
   import { slide } from 'svelte/transition'
-  import { cardDeckIn, cardDeckOut } from './transitions'
+  import WorldviewHero from './WorldviewHero.svelte'
   import {
     calculateCharacterAge,
     formatCharacterAge,
@@ -229,40 +229,15 @@
 <svelte:window onclick={handleWindowClick} />
 
 <section class="age-page">
-  <div class="worldview-stage worldview-stage-hero">
-    {#each [
-      {
-        description: worldviewDescription,
-        hasCover: worldviewHasCover,
-        key: worldviewTransitionKey,
-        name: worldviewName,
-        tags: worldviewTags,
-        themeStyle: worldviewThemeStyle,
-      },
-    ] as scene (scene.key)}
-      <section
-        class:is-current={scene.key === worldviewTransitionKey}
-        class:is-plain={!scene.hasCover}
-        class="hero-panel hero-panel-worldview age-hero worldview-layer"
-        style={scene.themeStyle}
-        in:cardDeckIn
-        out:cardDeckOut
-      >
-        <div class="hero-copy worldview-hero-copy">
-          <p class="eyebrow">当前世界观 / 角色年龄编年</p>
-          <h1>{scene.name}</h1>
-          <p class="lede">
-            {scene.description} 当前页面按自定义编年节点记录角色年龄，并根据“基准编年 + 基准年龄”自动推算。
-          </p>
-          <div class="hero-pill-row" aria-label="角色年龄页补充信息">
-            {#each scene.tags as tag}
-              <span>{tag}</span>
-            {/each}
-          </div>
-        </div>
-      </section>
-    {/each}
-  </div>
+  <WorldviewHero
+    description={worldviewDescription}
+    hasCover={worldviewHasCover}
+    name={worldviewName}
+    panelClass="age-hero"
+    tags={worldviewTags}
+    themeStyle={worldviewThemeStyle}
+    transitionKey={worldviewTransitionKey}
+  />
 
   <section class="age-workspace">
     <aside class="age-sidebar">
