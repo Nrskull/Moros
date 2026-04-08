@@ -1,12 +1,43 @@
 export const CHAT_MAX_MESSAGE_LENGTH = 500
 export const CHAT_NICKNAME_MAX_LENGTH = 24
+export const CHAT_ROOM_NAME_MAX_LENGTH = 32
+export const CHAT_CHARACTER_NAME_MAX_LENGTH = 32
 export const CHAT_STORAGE_SESSION_KEY = 'timeline-chat-session-id'
 export const CHAT_STORAGE_NICKNAME_KEY = 'timeline-chat-nickname'
+export const CHAT_STORAGE_ROOM_KEY = 'timeline-chat-room-id'
 export const DEFAULT_CHAT_PORT = '3031'
 export const PUBLIC_CHAT_ROOM_ID = 'public'
 
-export type ChatMessageKind = 'system' | 'user'
+export type ChatMessageKind = 'system' | 'user' | 'dice'
 export type ChatConnectionState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+
+export interface ChatUser {
+  displayName: string
+  handle: string
+  id: string
+  role: string
+  status: string
+}
+
+export interface ChatCharacterAttributes {
+  appearance: number
+  constitution: number
+  dexterity: number
+  education: number
+  intelligence: number
+  luck: number
+  size: number
+  strength: number
+  willpower: number
+}
+
+export interface ChatCharacterCard {
+  attributes: ChatCharacterAttributes
+  id: string
+  isDefault: boolean
+  name: string
+  status: string
+}
 
 export interface ChatMessage {
   body: string
@@ -26,6 +57,14 @@ export interface ChatMember {
   sessionId: string
 }
 
+export interface ChatRoom {
+  createdAt: number
+  id: string
+  latestMessageAt: number | null
+  memberCount: number
+  name: string
+}
+
 export function buildChatWebSocketUrl(): string {
   const explicitUrl = import.meta.env.VITE_CHAT_WS_URL?.trim()
 
@@ -36,10 +75,29 @@ export function buildChatWebSocketUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const host = window.location.hostname
   if (import.meta.env.DEV) {
-      const port = import.meta.env.VITE_CHAT_PORT?.trim() || DEFAULT_CHAT_PORT
-      return `${protocol}://${host}:${port}/ws`
-    }
+    const port = import.meta.env.VITE_CHAT_PORT?.trim() || DEFAULT_CHAT_PORT
+    return `${protocol}://${host}:${port}/ws`
+  }
   return `${protocol}://${host}/ws`
+}
+
+export function buildChatHttpUrl(pathname: string): string {
+  const safePathname = pathname.startsWith('/') ? pathname : `/${pathname}`
+  const explicitBase = import.meta.env.VITE_CHAT_HTTP_URL?.trim()
+
+  if (explicitBase) {
+    return `${explicitBase.replace(/\/+$/, '')}${safePathname}`
+  }
+
+  const protocol = window.location.protocol
+  const host = window.location.hostname
+
+  if (import.meta.env.DEV) {
+    const port = import.meta.env.VITE_CHAT_PORT?.trim() || DEFAULT_CHAT_PORT
+    return `${protocol}//${host}:${port}${safePathname}`
+  }
+
+  return `${window.location.origin}${safePathname}`
 }
 
 export function createChatSessionId(): string {
