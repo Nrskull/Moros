@@ -7,9 +7,7 @@
     type ChatCharacterAttributes,
     type ChatCharacterCard,
     CHAT_MAX_MESSAGE_LENGTH,
-    CHAT_NICKNAME_MAX_LENGTH,
     CHAT_ROOM_NAME_MAX_LENGTH,
-    CHAT_STORAGE_NICKNAME_KEY,
     CHAT_STORAGE_ROOM_KEY,
     CHAT_STORAGE_SESSION_KEY,
     createChatSessionId,
@@ -69,6 +67,31 @@
     type: 'character_state'
   }
 
+  interface ChatSystemRenderItem {
+    body: string
+    createdAt: number
+    id: string
+    type: 'system'
+  }
+
+  interface ChatNarrationRenderItem {
+    body: string
+    createdAt: number
+    id: string
+    isRulingTone: boolean
+    type: 'narration'
+  }
+
+  interface ChatMessageRenderGroup {
+    groupKey: string
+    id: string
+    isOwn: boolean
+    messages: ChatMessage[]
+    speakerAvatar: string
+    speakerName: string
+    type: 'group'
+  }
+
   type ChatServerPayload =
     | ChatAuthRequiredPayload
     | ChatCharacterStatePayload
@@ -77,6 +100,8 @@
     | ChatMessagePayload
     | ChatPresencePayload
     | ChatRoomsPayload
+
+  type ChatRenderItem = ChatMessageRenderGroup | ChatNarrationRenderItem | ChatSystemRenderItem
 
   interface ChatAuthResponse {
     authenticated?: boolean
@@ -120,7 +145,6 @@
   let activeRoomId = PUBLIC_CHAT_ROOM_ID
   let sessionId = ''
   let nickname = ''
-  let nicknameDraft = ''
   let accessKeyDraft = ''
   let draftMessage = ''
   let connectionState: ChatConnectionState = 'disconnected'
@@ -134,7 +158,6 @@
   let members: ChatMember[] = []
   let unreadIncomingCount = 0
   let isAuthPromptOpen = false
-  let isNicknamePromptOpen = false
   let isCreateRoomPromptOpen = false
   let createRoomDraft = ''
   let createRoomError = ''
@@ -142,17 +165,27 @@
   let createCharacterNameDraft = ''
   let createCharacterError = ''
   let createCharacterAttributesDraft: ChatCharacterAttributes = createEmptyCharacterAttributes()
+  let createCharacterAvatarInputElement: HTMLInputElement | null = null
+  let createCharacterAvatarDataUrl = ''
   let isEditCharacterPromptOpen = false
   let editCharacterId = ''
   let editCharacterNameDraft = ''
   let editCharacterError = ''
   let editCharacterAttributesDraft: ChatCharacterAttributes = createEmptyCharacterAttributes()
+  let editCharacterAvatarInputElement: HTMLInputElement | null = null
+  let editCharacterAvatarDataUrl = ''
   let isCharacterMenuOpen = false
   let roomList: ChatRoom[] = [ROOM_PLACEHOLDER]
   let activeCharacter: ChatCharacterCard | null = null
+  let renderedMessages: ChatRenderItem[] = []
 
   function sanitiseNickname(value: string): string {
-    return value.replace(/\s+/g, ' ').trim().slice(0, CHAT_NICKNAME_MAX_LENGTH)
+    return value.replace(/\s+/g, ' ').trim().slice(0, 24)
+  }
+
+  function resolveChatNicknameFromUser(user: ChatUser | null): string {
+    const preferredName = user?.displayName?.trim() || user?.handle?.trim() || ''
+    return sanitiseNickname(preferredName)
   }
 
   function sanitiseRoomName(value: string): string {
@@ -205,20 +238,131 @@
     return message.kind !== 'system' && message.sessionId === sessionId
   }
 
-  function shouldShowMessageMeta(index: number): boolean {
-    const current = messages[index]
-    const previous = messages[index - 1]
+  function getMessageSpeakerName(message: ChatMessage): string {
+    const safeSpeakerName = message.speakerName.trim()
 
-    if (!current || current.kind !== 'user') {
-      return true
+    if (safeSpeakerName !== '') {
+      return safeSpeakerName
     }
 
-    return !previous || previous.kind !== 'user' || previous.nickname !== current.nickname
+    return message.nickname.trim() || '未设置角色'
+  }
+
+  function getMessageSpeakerAvatar(message: ChatMessage): string {
+    return message.speakerAvatarDataUrl ?? ''
+  }
+
+  function getMessageDisplayMode(message: ChatMessage): 'bubble' | 'kp-narration' {
+    return message.speakerDisplayMode === 'kp-narration' ? 'kp-narration' : 'bubble'
+  }
+
+  function getSpeakerInitial(name: string): string {
+    return name.trim().charAt(0) || '角'
+  }
+
+  function syncMessageIndent(node: HTMLElement): void {
+    const computedStyle = window.getComputedStyle(node)
+    const lineHeight = Number.parseFloat(computedStyle.lineHeight)
+
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
+      node.classList.remove('is-indent-active')
+      return
+    }
+
+    const contentHeight = node.getBoundingClientRect().height
+    node.classList.toggle('is-indent-active', contentHeight > lineHeight * 1.5)
+  }
+
+  function autoIndentMessage(node: HTMLElement): { destroy: () => void } {
+    const resizeObserver = new ResizeObserver(() => {
+      syncMessageIndent(node)
+    })
+
+    resizeObserver.observe(node)
+
+    if (node.parentElement) {
+      resizeObserver.observe(node.parentElement)
+    }
+
+    requestAnimationFrame(() => {
+      syncMessageIndent(node)
+    })
+
+    return {
+      destroy() {
+        resizeObserver.disconnect()
+      },
+    }
+  }
+
+  function isKpNarrationCharacter(character: ChatCharacterCard | null): boolean {
+    return character?.presentationMode === 'kp-narration'
+  }
+
+  function getMessageGroupKey(message: ChatMessage | undefined): string | null {
+    if (!message || message.kind === 'system') {
+      return null
+    }
+
+    return `${message.sessionId ?? 'anonymous'}::${message.speakerCharacterId ?? ''}::${getMessageSpeakerName(message)}::${getMessageSpeakerAvatar(message)}`
+  }
+
+  function buildRenderedMessages(input: ChatMessage[]): ChatRenderItem[] {
+    const nextItems: ChatRenderItem[] = []
+    let activeGroup: ChatMessageRenderGroup | null = null
+
+    for (const message of input) {
+      if (message.kind === 'system') {
+        activeGroup = null
+        nextItems.push({
+          body: message.body,
+          createdAt: message.createdAt,
+          id: `system_${message.sequence}`,
+          type: 'system',
+        })
+        continue
+      }
+
+      if (getMessageDisplayMode(message) === 'kp-narration') {
+        activeGroup = null
+        nextItems.push({
+          body: message.body,
+          createdAt: message.createdAt,
+          id: `narration_${message.sequence}`,
+          isRulingTone: message.kind === 'dice',
+          type: 'narration',
+        })
+        continue
+      }
+
+      const groupKey = getMessageGroupKey(message)
+
+      if (!groupKey) {
+        continue
+      }
+
+      if (!activeGroup || activeGroup.groupKey !== groupKey) {
+        activeGroup = {
+          groupKey,
+          id: `group_${message.sequence}`,
+          isOwn: isOwnMessage(message),
+          messages: [message],
+          speakerAvatar: getMessageSpeakerAvatar(message),
+          speakerName: getMessageSpeakerName(message),
+          type: 'group',
+        }
+        nextItems.push(activeGroup)
+        continue
+      }
+
+      activeGroup.messages.push(message)
+    }
+
+    return nextItems
   }
 
   function persistIdentity(): void {
     localStorage.setItem(CHAT_STORAGE_SESSION_KEY, sessionId)
-    localStorage.setItem(CHAT_STORAGE_NICKNAME_KEY, nickname)
   }
 
   function persistActiveRoom(): void {
@@ -397,6 +541,109 @@
     }
   }
 
+  function clearCreateCharacterAvatar(): void {
+    createCharacterAvatarDataUrl = ''
+
+    if (createCharacterAvatarInputElement) {
+      createCharacterAvatarInputElement.value = ''
+    }
+  }
+
+  function clearEditCharacterAvatar(): void {
+    editCharacterAvatarDataUrl = ''
+
+    if (editCharacterAvatarInputElement) {
+      editCharacterAvatarInputElement.value = ''
+    }
+  }
+
+  function triggerCreateCharacterAvatarPicker(): void {
+    createCharacterAvatarInputElement?.click()
+  }
+
+  function triggerEditCharacterAvatarPicker(): void {
+    editCharacterAvatarInputElement?.click()
+  }
+
+  function readAvatarFileAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+
+      reader.addEventListener('load', () => {
+        const result = typeof reader.result === 'string' ? reader.result : ''
+
+        if (result === '') {
+          reject(new Error('EMPTY_RESULT'))
+          return
+        }
+
+        resolve(result)
+      })
+
+      reader.addEventListener('error', () => {
+        reject(new Error('READ_FAILED'))
+      })
+
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async function handleCreateCharacterAvatarChange(event: Event): Promise<void> {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+
+    const file = target.files?.[0] ?? null
+
+    if (!file) {
+      return
+    }
+
+    if (!file.type.startsWith('image/')) {
+      createCharacterError = '请选择图片文件作为角色头像。'
+      return
+    }
+
+    try {
+      createCharacterAvatarDataUrl = await readAvatarFileAsDataUrl(file)
+      createCharacterError = ''
+    } catch {
+      createCharacterError = '头像读取失败，请换一张图片后重试。'
+    } finally {
+      target.value = ''
+    }
+  }
+
+  async function handleEditCharacterAvatarChange(event: Event): Promise<void> {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+
+    const file = target.files?.[0] ?? null
+
+    if (!file) {
+      return
+    }
+
+    if (!file.type.startsWith('image/')) {
+      editCharacterError = '请选择图片文件作为角色头像。'
+      return
+    }
+
+    try {
+      editCharacterAvatarDataUrl = await readAvatarFileAsDataUrl(file)
+      editCharacterError = ''
+    } catch {
+      editCharacterError = '头像读取失败，请换一张图片后重试。'
+    } finally {
+      target.value = ''
+    }
+  }
+
   function handleWindowClick(event: MouseEvent): void {
     if (!isCharacterMenuOpen || !characterMenuElement) {
       return
@@ -462,15 +709,16 @@
       }
 
       currentUser = payload.currentUser
+      nickname = resolveChatNicknameFromUser(payload.currentUser)
       accessKeyDraft = ''
       authError = ''
       isAuthPromptOpen = false
 
-      if (nickname === '') {
-        isNicknamePromptOpen = true
-        return
+      if (sessionId === '') {
+        sessionId = createChatSessionId()
       }
 
+      persistIdentity()
       shouldReconnect = true
       void connectToChat(messages.length > 0)
     } catch {
@@ -505,10 +753,10 @@
     if (payload.type === 'auth_required') {
       shouldReconnect = false
       currentUser = null
+      nickname = ''
       connectionState = 'disconnected'
       connectionError = payload.message
       isAuthPromptOpen = true
-      isNicknamePromptOpen = false
       closeSocket()
       return
     }
@@ -525,10 +773,11 @@
       createRoomError = ''
       createCharacterError = ''
       editCharacterError = ''
-      isNicknamePromptOpen = false
       isCreateRoomPromptOpen = false
       isCreateCharacterPromptOpen = false
       isEditCharacterPromptOpen = false
+      clearCreateCharacterAvatar()
+      clearEditCharacterAvatar()
       isCharacterMenuOpen = false
       persistActiveRoom()
 
@@ -546,6 +795,8 @@
       editCharacterError = ''
       isCreateCharacterPromptOpen = false
       isEditCharacterPromptOpen = false
+      clearCreateCharacterAvatar()
+      clearEditCharacterAvatar()
       isCharacterMenuOpen = false
       return
     }
@@ -614,10 +865,14 @@
       return
     }
 
-    if (nickname === '') {
-      isNicknamePromptOpen = true
+    const resolvedNickname = resolveChatNicknameFromUser(currentUser)
+
+    if (resolvedNickname === '') {
+      connectionError = '当前账号缺少可用昵称，请检查用户配置。'
       return
     }
+
+    nickname = resolvedNickname
 
     clearReconnectTimer()
 
@@ -679,47 +934,13 @@
 
       socket = null
 
-      if (!shouldReconnect || nickname === '') {
+      if (!shouldReconnect || !currentUser) {
         connectionState = 'disconnected'
         return
       }
 
       scheduleReconnect()
     })
-  }
-
-  function submitNickname(): void {
-    if (!currentUser) {
-      isAuthPromptOpen = true
-      return
-    }
-
-    const safeNickname = sanitiseNickname(nicknameDraft)
-
-    if (safeNickname === '') {
-      connectionError = '请输入昵称后再进入聊天室。'
-      return
-    }
-
-    if (sessionId === '') {
-      sessionId = createChatSessionId()
-    }
-
-    nickname = safeNickname
-    nicknameDraft = safeNickname
-    shouldReconnect = true
-    persistIdentity()
-    void connectToChat(messages.length > 0)
-  }
-
-  function openNicknamePrompt(): void {
-    if (!currentUser) {
-      isAuthPromptOpen = true
-      return
-    }
-
-    nicknameDraft = nickname
-    isNicknamePromptOpen = true
   }
 
   function openCreateRoomPrompt(): void {
@@ -731,6 +952,7 @@
   function openCreateCharacterPrompt(): void {
     isCharacterMenuOpen = false
     isEditCharacterPromptOpen = false
+    clearCreateCharacterAvatar()
     createCharacterNameDraft = ''
     createCharacterAttributesDraft = createEmptyCharacterAttributes()
     createCharacterError = ''
@@ -740,11 +962,23 @@
   function openEditCharacterPrompt(character: ChatCharacterCard): void {
     isCharacterMenuOpen = false
     isCreateCharacterPromptOpen = false
+    clearEditCharacterAvatar()
     editCharacterId = character.id
     editCharacterNameDraft = character.name
     editCharacterAttributesDraft = cloneCharacterAttributes(character.attributes)
+    editCharacterAvatarDataUrl = character.avatarDataUrl ?? ''
     editCharacterError = ''
     isEditCharacterPromptOpen = true
+  }
+
+  function closeCreateCharacterPrompt(): void {
+    isCreateCharacterPromptOpen = false
+    clearCreateCharacterAvatar()
+  }
+
+  function closeEditCharacterPrompt(): void {
+    isEditCharacterPromptOpen = false
+    clearEditCharacterAvatar()
   }
 
   function toggleCharacterMenu(): void {
@@ -764,11 +998,6 @@
   function handleEditCharacterSubmit(event: SubmitEvent): void {
     event.preventDefault()
     submitEditCharacter()
-  }
-
-  function handleNicknameSubmit(event: SubmitEvent): void {
-    event.preventDefault()
-    submitNickname()
   }
 
   function handleAccessKeySubmit(event: SubmitEvent): void {
@@ -914,6 +1143,7 @@
     socket.send(
       JSON.stringify({
         attributes: createCharacterAttributesDraft,
+        avatarDataUrl: createCharacterAvatarDataUrl || null,
         name: characterName,
         type: 'create_character_card',
       }),
@@ -943,6 +1173,7 @@
     socket.send(
       JSON.stringify({
         attributes: editCharacterAttributesDraft,
+        avatarDataUrl: editCharacterAvatarDataUrl || null,
         characterId: editCharacterId,
         name: characterName,
         type: 'update_character_card',
@@ -976,25 +1207,18 @@
 
   onMount(() => {
     sessionId = localStorage.getItem(CHAT_STORAGE_SESSION_KEY) ?? ''
-    nickname = sanitiseNickname(localStorage.getItem(CHAT_STORAGE_NICKNAME_KEY) ?? '')
     activeRoomId = localStorage.getItem(CHAT_STORAGE_ROOM_KEY)?.trim() || PUBLIC_CHAT_ROOM_ID
-    nicknameDraft = nickname
 
     void (async () => {
       const hasAuthSession = await restoreAuthSession()
 
       if (!hasAuthSession) {
         isAuthPromptOpen = true
-        isNicknamePromptOpen = false
         return
       }
 
       isAuthPromptOpen = false
-
-      if (nickname === '') {
-        isNicknamePromptOpen = true
-        return
-      }
+      nickname = resolveChatNicknameFromUser(currentUser)
 
       if (sessionId === '') {
         sessionId = createChatSessionId()
@@ -1002,7 +1226,6 @@
       }
 
       shouldReconnect = true
-      isNicknamePromptOpen = false
       void connectToChat()
     })()
   })
@@ -1011,6 +1234,8 @@
     shouldReconnect = false
     clearReconnectTimer()
     closeSocket()
+    clearCreateCharacterAvatar()
+    clearEditCharacterAvatar()
   })
 
   $: connectionLabel = getConnectionLabel(connectionState)
@@ -1018,6 +1243,7 @@
   $: roomList = rooms.length === 0 ? [ROOM_PLACEHOLDER] : rooms
   $: activeCharacter =
     activeCharacterId === null ? null : characterCards.find((entry) => entry.id === activeCharacterId) ?? null
+  $: renderedMessages = buildRenderedMessages(messages)
 </script>
 
 <svelte:window onclick={handleWindowClick} />
@@ -1037,12 +1263,9 @@
           <button class="toolbar-action" type="button" onclick={openAuthPrompt}>
             {currentUser ? '更换密钥' : '输入密钥'}
           </button>
-          <button class="toolbar-action" type="button" onclick={openNicknamePrompt}>
-            {nickname === '' ? '输入昵称' : '更换昵称'}
-          </button>
           <button
             class="toolbar-action"
-            disabled={connectionState === 'connected' || nickname === '' || !currentUser}
+            disabled={connectionState === 'connected' || !currentUser}
             type="button"
             onclick={() => connectToChat(connectionState === 'reconnecting')}
           >
@@ -1054,7 +1277,7 @@
           <span class="chat-connection-dot" aria-hidden="true"></span>
           <strong>{connectionLabel}</strong>
           <span>{currentUser ? `身份：${currentUser.displayName}` : isAuthChecking ? '身份校验中' : '等待输入密钥'}</span>
-          <span>{nickname === '' ? '等待输入昵称' : `昵称：${nickname}`}</span>
+          <span>{currentUser ? `聊天身份：${resolveChatNicknameFromUser(currentUser)}` : '等待匹配用户身份'}</span>
           {#if currentUser}
             <span>{`账号：${currentUser.handle} / ${currentUser.role}`}</span>
           {/if}
@@ -1101,8 +1324,8 @@
               </span>
               <p>
                 {entry.id === PUBLIC_CHAT_ROOM_ID
-                  ? '默认公共聊天室，所有进入聊天室的用户都可见。'
-                  : '自建文本聊天室，可即时切换并保留最近消息历史。'}
+                  ? '默认公共聊天室，拥有该房间权限的用户可见。'
+                  : '自建文本聊天室，仅已授权成员可进入并查看最近消息历史。'}
               </p>
             </button>
           {/each}
@@ -1126,38 +1349,52 @@
           {#if messages.length === 0}
             <div class="chat-empty-state">
               <strong>聊天室还没有消息。</strong>
-              <p>完成密钥验证并输入昵称后，就可以在这里开始即时对话。</p>
+              <p>完成密钥验证后，系统会直接匹配你的账号、角色卡和可进入房间。</p>
             </div>
           {:else}
             <div class="chat-message-list">
-              {#each messages as message, index (message.sequence)}
-                {#if message.kind === 'system'}
+              {#each renderedMessages as item (item.id)}
+                {#if item.type === 'system'}
                   <div class="chat-system-message">
-                    <span>{message.body}</span>
-                    <time datetime={new Date(message.createdAt).toISOString()}>
-                      {formatChatTimestamp(message.createdAt)}
+                    <span>{item.body}</span>
+                    <time datetime={new Date(item.createdAt).toISOString()}>
+                      {formatChatTimestamp(item.createdAt)}
                     </time>
                   </div>
+                {:else if item.type === 'narration'}
+                  <div class:has-ruling-tone={item.isRulingTone} class="chat-message-narration">
+                    <p use:autoIndentMessage class="chat-message-text">{item.body}</p>
+                  </div>
                 {:else}
-                  <article
-                    class:is-dice={message.kind === 'dice'}
-                    class:is-own={isOwnMessage(message)}
-                    class="chat-message-item"
-                  >
-                    {#if shouldShowMessageMeta(index)}
+                  <article class:is-own={item.isOwn} class="chat-message-group">
+                    <div class="chat-message-avatar-slot">
+                      <div class="chat-message-avatar">
+                        {#if item.speakerAvatar !== ''}
+                          <img alt={`${item.speakerName} 头像`} src={item.speakerAvatar} />
+                        {:else}
+                          <span>{getSpeakerInitial(item.speakerName)}</span>
+                        {/if}
+                      </div>
+                    </div>
+
+                    <div class="chat-message-column">
                       <div class="chat-message-meta">
-                        <strong>{message.nickname}</strong>
-                        <time datetime={new Date(message.createdAt).toISOString()}>
-                          {formatChatTimestamp(message.createdAt)}
+                        <strong>{item.speakerName}</strong>
+                        <time datetime={new Date(item.messages[0].createdAt).toISOString()}>
+                          {formatChatTimestamp(item.messages[0].createdAt)}
                         </time>
                       </div>
-                    {/if}
 
-                    <div class:chat-dice-bubble={message.kind === 'dice'} class="chat-message-bubble">
-                      {#if message.kind === 'dice'}
-                        <span class="chat-message-kind">检定结果</span>
-                      {/if}
-                      <p>{message.body}</p>
+                      <div class="chat-message-bubble-list">
+                        {#each item.messages as message (message.sequence)}
+                          <div class:chat-dice-bubble={message.kind === 'dice'} class="chat-message-bubble">
+                            {#if message.kind === 'dice'}
+                              <span class="chat-message-kind">检定结果</span>
+                            {/if}
+                            <p use:autoIndentMessage class="chat-message-text">{message.body}</p>
+                          </div>
+                        {/each}
+                      </div>
                     </div>
                   </article>
                 {/if}
@@ -1181,7 +1418,11 @@
               type="button"
               onclick={toggleCharacterMenu}
             >
-              <span>{activeCharacter ? `当前角色：${activeCharacter.name}` : '当前角色：未设置'}</span>
+              <span>
+                {activeCharacter
+                  ? `当前角色：${activeCharacter.name}${isKpNarrationCharacter(activeCharacter) ? ' · KP旁白' : ''}`
+                  : '当前角色：未设置'}
+              </span>
               <span aria-hidden="true">{isCharacterMenuOpen ? '▴' : '▾'}</span>
             </button>
 
@@ -1199,7 +1440,15 @@
                         onclick={() => switchActiveCharacter(character.id)}
                       >
                         <strong>{character.name}</strong>
-                        <span>{character.id === activeCharacterId ? '当前使用' : '切换到该角色'}</span>
+                        <span>
+                          {character.id === activeCharacterId
+                            ? isKpNarrationCharacter(character)
+                              ? '当前使用 / KP旁白模式'
+                              : '当前使用'
+                            : isKpNarrationCharacter(character)
+                              ? '切换到 KP 旁白模式'
+                              : '切换到该角色'}
+                        </span>
                       </button>
 
                       <button
@@ -1310,36 +1559,6 @@
     </div>
   {/if}
 
-  {#if isNicknamePromptOpen}
-    <div class="chat-nickname-overlay">
-      <form class="chat-nickname-dialog" onsubmit={handleNicknameSubmit}>
-        <div>
-          <span class="section-label">进入聊天室</span>
-          <h3>先输入昵称</h3>
-          <p>昵称会缓存在当前设备，下次进入可直接恢复并自动连接。</p>
-        </div>
-
-        <label class="chat-nickname-field">
-          <span>昵称</span>
-          <input bind:value={nicknameDraft} maxlength={CHAT_NICKNAME_MAX_LENGTH} placeholder="例如：KP / 阿泽 / 七月" type="text" />
-        </label>
-
-        {#if connectionError !== ''}
-          <div class="chat-nickname-error">{connectionError}</div>
-        {/if}
-
-        <div class="chat-nickname-actions">
-          {#if nickname !== ''}
-            <button class="toolbar-action" type="button" onclick={() => (isNicknamePromptOpen = false)}>
-              取消
-            </button>
-          {/if}
-          <button class="toolbar-action toolbar-primary" type="submit">进入聊天室</button>
-        </div>
-      </form>
-    </div>
-  {/if}
-
   {#if isCreateRoomPromptOpen}
     <div class="chat-nickname-overlay">
       <form class="chat-nickname-dialog" onsubmit={handleCreateRoomSubmit}>
@@ -1382,6 +1601,39 @@
           <input bind:value={createCharacterNameDraft} maxlength={CHAT_CHARACTER_NAME_MAX_LENGTH} placeholder="例如：小玛丽" type="text" />
         </label>
 
+        <div class="chat-character-avatar-block">
+          <div>
+            <span class="section-label">角色头像</span>
+            <p>上传后会和角色卡一起保存，后续这张角色发送的消息会直接带上它。</p>
+          </div>
+
+          <div class="chat-character-avatar-row">
+            <button class="chat-character-avatar-picker" type="button" onclick={triggerCreateCharacterAvatarPicker}>
+              {#if createCharacterAvatarDataUrl !== ''}
+                <img alt="角色头像预览" src={createCharacterAvatarDataUrl} />
+              {:else}
+                <div class="chat-character-avatar-placeholder">
+                  <strong>+</strong>
+                  <span>点击上传头像</span>
+                </div>
+              {/if}
+            </button>
+
+            <div class="chat-character-avatar-copy">
+              <strong>创建时一并保存</strong>
+              <span>后续发送聊天消息和检定结果时，会使用当下角色的头像快照。</span>
+            </div>
+          </div>
+
+          <input
+            bind:this={createCharacterAvatarInputElement}
+            accept="image/*"
+            class="chat-character-avatar-input"
+            onchange={handleCreateCharacterAvatarChange}
+            type="file"
+          />
+        </div>
+
         <div class="chat-character-grid">
           {#each ATTRIBUTE_FIELDS as field}
             <label class="chat-character-field">
@@ -1402,7 +1654,7 @@
         {/if}
 
         <div class="chat-nickname-actions">
-          <button class="toolbar-action" type="button" onclick={() => (isCreateCharacterPromptOpen = false)}>
+          <button class="toolbar-action" type="button" onclick={closeCreateCharacterPrompt}>
             取消
           </button>
           <button class="toolbar-action toolbar-primary" type="submit">创建角色卡</button>
@@ -1425,6 +1677,39 @@
           <input bind:value={editCharacterNameDraft} maxlength={CHAT_CHARACTER_NAME_MAX_LENGTH} placeholder="例如：周明 / 林雾 / 宋澈" type="text" />
         </label>
 
+        <div class="chat-character-avatar-block">
+          <div>
+            <span class="section-label">角色头像</span>
+            <p>这里修改的是角色卡本身；新发出的消息会带上新的角色快照，历史消息不会被回改。</p>
+          </div>
+
+          <div class="chat-character-avatar-row">
+            <button class="chat-character-avatar-picker" type="button" onclick={triggerEditCharacterAvatarPicker}>
+              {#if editCharacterAvatarDataUrl !== ''}
+                <img alt="角色头像预览" src={editCharacterAvatarDataUrl} />
+              {:else}
+                <div class="chat-character-avatar-placeholder">
+                  <strong>+</strong>
+                  <span>点击上传头像</span>
+                </div>
+              {/if}
+            </button>
+
+            <div class="chat-character-avatar-copy">
+              <strong>持久化角色头像</strong>
+              <span>保存后，这张角色卡后续在聊天中的发言会显示新的头像；旧消息仍保留旧快照。</span>
+            </div>
+          </div>
+
+          <input
+            bind:this={editCharacterAvatarInputElement}
+            accept="image/*"
+            class="chat-character-avatar-input"
+            onchange={handleEditCharacterAvatarChange}
+            type="file"
+          />
+        </div>
+
         <div class="chat-character-grid">
           {#each ATTRIBUTE_FIELDS as field}
             <label class="chat-character-field">
@@ -1445,7 +1730,7 @@
         {/if}
 
         <div class="chat-nickname-actions">
-          <button class="toolbar-action" type="button" onclick={() => (isEditCharacterPromptOpen = false)}>
+          <button class="toolbar-action" type="button" onclick={closeEditCharacterPrompt}>
             取消
           </button>
           <button class="toolbar-action toolbar-primary" type="submit">保存修改</button>

@@ -22,6 +22,50 @@ const ADMIN_USER = {
   role: 'admin',
   status: 'active',
 }
+const SEEDED_CHAT_USERS = [
+  {
+    displayName: 'edie',
+    handle: 'edie',
+    id: 'user_edie',
+    role: 'member',
+    status: 'active',
+  },
+  {
+    displayName: 'lateraven',
+    handle: 'lateraven',
+    id: 'user_lateraven',
+    role: 'member',
+    status: 'active',
+  },
+  {
+    displayName: 'sakin',
+    handle: 'sakin',
+    id: 'user_sakin',
+    role: 'member',
+    status: 'active',
+  },
+  {
+    displayName: 'chen',
+    handle: 'chen',
+    id: 'user_chen',
+    role: 'member',
+    status: 'active',
+  },
+  {
+    displayName: 'eshis',
+    handle: 'eshis',
+    id: 'user_eshis',
+    role: 'member',
+    status: 'active',
+  },
+  {
+    displayName: 'Lotka',
+    handle: 'lotka',
+    id: 'user_lotka',
+    role: 'member',
+    status: 'active',
+  },
+]
 const AUTH_COOKIE_NAME = 'timeline_chat_auth'
 const AUTH_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30
 const AUTH_SESSION_RENEW_THRESHOLD_MS = 1000 * 60 * 60 * 24 * 7
@@ -30,6 +74,7 @@ const AUTH_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 10
 const AUTH_RATE_LIMIT_BLOCK_MS = 1000 * 60 * 15
 const AUTH_RATE_LIMIT_MAX_FAILURES = 6
 const ADMIN_ACCESS_KEY_FILE = path.join(dataDirectory, 'admin-access-key.txt')
+const SEEDED_USER_ACCESS_KEY_FILE = path.join(dataDirectory, 'seeded-user-access-keys.txt')
 const ADMIN_ACCESS_KEY_ENV = String(process.env.CHAT_ADMIN_ACCESS_KEY ?? '').trim()
 const MAX_HISTORY_LIMIT = 80
 const MAX_MESSAGE_LENGTH = 500
@@ -37,6 +82,10 @@ const MAX_NICKNAME_LENGTH = 24
 const MAX_ROOM_NAME_LENGTH = 32
 const MAX_CHARACTER_NAME_LENGTH = 32
 const MAX_ATTRIBUTE_VALUE = 100
+const MAX_AVATAR_DATA_URL_LENGTH = 400000
+const CHAT_PRESENTATION_BUBBLE = 'bubble'
+const CHAT_PRESENTATION_KP_NARRATION = 'kp-narration'
+const ADMIN_KP_CHARACTER_NAME = 'KP'
 
 const ATTRIBUTE_DEFINITIONS = [
   { key: 'strength', label: '力量' },
@@ -107,6 +156,10 @@ database.exec(`
     room_id TEXT NOT NULL,
     session_id TEXT,
     nickname TEXT NOT NULL,
+    speaker_name TEXT,
+    speaker_character_id TEXT,
+    speaker_avatar_data_url TEXT,
+    speaker_display_mode TEXT NOT NULL,
     kind TEXT NOT NULL,
     body TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -133,10 +186,24 @@ database.exec(`
   CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
 
+  CREATE TABLE IF NOT EXISTS room_memberships (
+    room_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (room_id, user_id),
+    FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_room_memberships_user_id ON room_memberships(user_id);
+
   CREATE TABLE IF NOT EXISTS character_cards (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
+    avatar_data_url TEXT,
+    presentation_mode TEXT NOT NULL,
     status TEXT NOT NULL,
     is_default INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
@@ -175,6 +242,12 @@ function ensureColumn(tableName, columnName, columnDefinition) {
 
 ensureColumn('sessions', 'user_id', 'user_id TEXT')
 ensureColumn('sessions', 'active_character_id', 'active_character_id TEXT')
+ensureColumn('character_cards', 'avatar_data_url', 'avatar_data_url TEXT')
+ensureColumn('character_cards', 'presentation_mode', `presentation_mode TEXT NOT NULL DEFAULT '${CHAT_PRESENTATION_BUBBLE}'`)
+ensureColumn('messages', 'speaker_name', 'speaker_name TEXT')
+ensureColumn('messages', 'speaker_character_id', 'speaker_character_id TEXT')
+ensureColumn('messages', 'speaker_avatar_data_url', 'speaker_avatar_data_url TEXT')
+ensureColumn('messages', 'speaker_display_mode', `speaker_display_mode TEXT NOT NULL DEFAULT '${CHAT_PRESENTATION_BUBBLE}'`)
 
 const statementInsertRoom = database.prepare(`
   INSERT INTO rooms (id, name, created_at)
@@ -297,9 +370,48 @@ const statementSelectRooms = database.prepare(`
     rooms.created_at ASC
 `)
 
+const statementSelectRoomsForUser = database.prepare(`
+  SELECT
+    rooms.id,
+    rooms.name,
+    rooms.created_at AS createdAt,
+    latest.latest_message_at AS latestMessageAt
+  FROM room_memberships
+  JOIN rooms ON rooms.id = room_memberships.room_id
+  LEFT JOIN (
+    SELECT room_id, MAX(created_at) AS latest_message_at
+    FROM messages
+    WHERE kind != 'system'
+    GROUP BY room_id
+  ) latest ON latest.room_id = rooms.id
+  WHERE room_memberships.user_id = ?
+  ORDER BY
+    CASE WHEN rooms.id = ? THEN 0 ELSE 1 END ASC,
+    COALESCE(latest.latest_message_at, rooms.created_at) DESC,
+    rooms.created_at ASC
+`)
+
+const statementSelectAccessibleRoomForUser = database.prepare(`
+  SELECT
+    rooms.id,
+    rooms.name,
+    rooms.created_at AS createdAt
+  FROM room_memberships
+  JOIN rooms ON rooms.id = room_memberships.room_id
+  WHERE room_memberships.user_id = ?
+    AND room_memberships.room_id = ?
+  LIMIT 1
+`)
+
 const statementCountRooms = database.prepare(`
   SELECT COUNT(*) AS count
   FROM rooms
+`)
+
+const statementInsertRoomMembership = database.prepare(`
+  INSERT INTO room_memberships (room_id, user_id, role, created_at)
+  VALUES (@roomId, @userId, @role, @createdAt)
+  ON CONFLICT(room_id, user_id) DO NOTHING
 `)
 
 const statementUpsertSession = database.prepare(`
@@ -399,13 +511,57 @@ const statementUpdateSessionActiveCharacter = database.prepare(`
 `)
 
 const statementInsertMessage = database.prepare(`
-  INSERT INTO messages (id, room_id, session_id, nickname, kind, body, created_at)
-  VALUES (@id, @roomId, @sessionId, @nickname, @kind, @body, @createdAt)
+  INSERT INTO messages (
+    id,
+    room_id,
+    session_id,
+    nickname,
+    speaker_name,
+    speaker_character_id,
+    speaker_avatar_data_url,
+    speaker_display_mode,
+    kind,
+    body,
+    created_at
+  )
+  VALUES (
+    @id,
+    @roomId,
+    @sessionId,
+    @nickname,
+    @speakerName,
+    @speakerCharacterId,
+    @speakerAvatarDataUrl,
+    @speakerDisplayMode,
+    @kind,
+    @body,
+    @createdAt
+  )
 `)
 
 const statementInsertCharacterCard = database.prepare(`
-  INSERT INTO character_cards (id, user_id, name, status, is_default, created_at, updated_at)
-  VALUES (@id, @userId, @name, @status, @isDefault, @createdAt, @updatedAt)
+  INSERT INTO character_cards (
+    id,
+    user_id,
+    name,
+    avatar_data_url,
+    presentation_mode,
+    status,
+    is_default,
+    created_at,
+    updated_at
+  )
+  VALUES (
+    @id,
+    @userId,
+    @name,
+    @avatarDataUrl,
+    @presentationMode,
+    @status,
+    @isDefault,
+    @createdAt,
+    @updatedAt
+  )
 `)
 
 const statementInsertCharacterAttributes = database.prepare(`
@@ -442,8 +598,16 @@ const statementInsertCharacterAttributes = database.prepare(`
 const statementUpdateCharacterCard = database.prepare(`
   UPDATE character_cards
   SET name = @name,
+      avatar_data_url = @avatarDataUrl,
       updated_at = @updatedAt
   WHERE id = @id AND user_id = @userId
+`)
+
+const statementUpdateCharacterPresentationMode = database.prepare(`
+  UPDATE character_cards
+  SET presentation_mode = @presentationMode,
+      updated_at = @updatedAt
+  WHERE id = @id
 `)
 
 const statementUpdateCharacterAttributes = database.prepare(`
@@ -465,6 +629,8 @@ const statementSelectCharacterCardsForUser = database.prepare(`
   SELECT
     character_cards.id,
     character_cards.name,
+    character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.presentation_mode AS presentationMode,
     character_cards.status,
     character_cards.is_default AS isDefault,
     character_attributes.strength,
@@ -486,6 +652,8 @@ const statementSelectCharacterCardByIdForUser = database.prepare(`
   SELECT
     character_cards.id,
     character_cards.name,
+    character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.presentation_mode AS presentationMode,
     character_cards.status,
     character_cards.is_default AS isDefault,
     character_attributes.strength,
@@ -503,6 +671,24 @@ const statementSelectCharacterCardByIdForUser = database.prepare(`
   LIMIT 1
 `)
 
+const statementSelectNarrationCharacterForUser = database.prepare(`
+  SELECT
+    character_cards.id,
+    character_cards.name,
+    character_cards.is_default AS isDefault
+  FROM character_cards
+  WHERE character_cards.user_id = ?
+    AND character_cards.status != 'archived'
+    AND (
+      character_cards.presentation_mode = ?
+      OR lower(character_cards.name) = lower(?)
+    )
+  ORDER BY
+    CASE WHEN character_cards.presentation_mode = ? THEN 0 ELSE 1 END ASC,
+    character_cards.created_at ASC
+  LIMIT 1
+`)
+
 const statementSelectMessagesSince = database.prepare(`
   SELECT
     sequence,
@@ -510,6 +696,10 @@ const statementSelectMessagesSince = database.prepare(`
     room_id AS roomId,
     session_id AS sessionId,
     nickname,
+    speaker_name AS speakerName,
+    speaker_character_id AS speakerCharacterId,
+    speaker_avatar_data_url AS speakerAvatarDataUrl,
+    speaker_display_mode AS speakerDisplayMode,
     kind,
     body,
     created_at AS createdAt
@@ -526,6 +716,10 @@ const statementSelectRecentMessages = database.prepare(`
     room_id AS roomId,
     session_id AS sessionId,
     nickname,
+    speaker_name AS speakerName,
+    speaker_character_id AS speakerCharacterId,
+    speaker_avatar_data_url AS speakerAvatarDataUrl,
+    speaker_display_mode AS speakerDisplayMode,
     kind,
     body,
     created_at AS createdAt
@@ -536,6 +730,10 @@ const statementSelectRecentMessages = database.prepare(`
       room_id,
       session_id,
       nickname,
+      speaker_name,
+      speaker_character_id,
+      speaker_avatar_data_url,
+      speaker_display_mode,
       kind,
       body,
       created_at
@@ -559,8 +757,11 @@ statementUpsertUser.run({
   updatedAt: Date.now(),
 })
 
+ensureRoomMembership(PUBLIC_ROOM.id, ADMIN_USER.id, 'owner')
 statementDeleteExpiredAuthSessions.run(Date.now())
 const adminAccessKeySeed = ensureAdminAccessKey()
+const seededUserAccessKeys = ensureSeededUsers()
+ensureAdminKpCharacter()
 
 const roomConnections = new Map()
 const sessionConnections = new Map()
@@ -580,6 +781,10 @@ function createAuthSessionToken() {
 
 function createAdminAccessKeyValue() {
   return `timeline-admin-${crypto.randomBytes(12).toString('hex')}`
+}
+
+function createSeededUserAccessKeyValue(handle) {
+  return `morosonder-${handle}-${crypto.randomBytes(8).toString('hex')}`
 }
 
 function hashSecret(value) {
@@ -899,6 +1104,124 @@ function ensureAdminAccessKey() {
   }
 }
 
+function ensureRoomMembership(roomId, userId, role = 'member') {
+  statementInsertRoomMembership.run({
+    createdAt: Date.now(),
+    role,
+    roomId,
+    userId,
+  })
+}
+
+function ensureSeededUsers() {
+  const now = Date.now()
+  const issuedAccessKeys = []
+
+  for (const user of SEEDED_CHAT_USERS) {
+    if (!statementSelectUser.get(user.id)) {
+      statementUpsertUser.run({
+        ...user,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+
+    ensureRoomMembership(PUBLIC_ROOM.id, user.id)
+    const existing = statementSelectAnyActiveAccessKeyForUser.get(user.id, now)
+
+    if (existing) {
+      continue
+    }
+
+    const accessKeyValue = createSeededUserAccessKeyValue(user.handle)
+    ensureAccessKeyForUser(user.id, accessKeyValue, `seeded：${user.handle}`)
+    issuedAccessKeys.push({
+      accessKeyValue,
+      displayName: user.displayName,
+      handle: user.handle,
+    })
+  }
+
+  if (issuedAccessKeys.length === 0) {
+    return {
+      filePath: fs.existsSync(SEEDED_USER_ACCESS_KEY_FILE) ? SEEDED_USER_ACCESS_KEY_FILE : null,
+      generatedCount: 0,
+    }
+  }
+
+  const sections = [
+    'Morosonder 聊天室种子用户访问密钥',
+    `生成时间：${new Date().toISOString()}`,
+    '',
+  ]
+
+  for (const entry of issuedAccessKeys) {
+    sections.push(`${entry.handle} (${entry.displayName})：${entry.accessKeyValue}`)
+  }
+
+  sections.push('')
+  sections.push('说明：这些密钥只在首次为对应用户生成时写入；后续服务重启会继续沿用数据库中的旧密钥，不会自动变更。')
+  sections.push('')
+
+  fs.writeFileSync(SEEDED_USER_ACCESS_KEY_FILE, sections.join('\n'), 'utf8')
+
+  return {
+    filePath: SEEDED_USER_ACCESS_KEY_FILE,
+    generatedCount: issuedAccessKeys.length,
+  }
+}
+
+function ensureAdminKpCharacter() {
+  const existingCharacter = statementSelectNarrationCharacterForUser.get(
+    ADMIN_USER.id,
+    CHAT_PRESENTATION_KP_NARRATION,
+    ADMIN_KP_CHARACTER_NAME,
+    CHAT_PRESENTATION_KP_NARRATION,
+  )
+
+  if (existingCharacter) {
+    statementUpdateCharacterPresentationMode.run({
+      id: existingCharacter.id,
+      presentationMode: CHAT_PRESENTATION_KP_NARRATION,
+      updatedAt: Date.now(),
+    })
+    return existingCharacter.id
+  }
+
+  const existingCharacters = getCharacterCardsForUser(ADMIN_USER.id)
+  const characterId = createCharacterId()
+  const now = Date.now()
+
+  statementInsertCharacterCard.run({
+    createdAt: now,
+    id: characterId,
+    isDefault: existingCharacters.length === 0 ? 1 : 0,
+    name: ADMIN_KP_CHARACTER_NAME,
+    avatarDataUrl: null,
+    presentationMode: CHAT_PRESENTATION_KP_NARRATION,
+    status: 'active',
+    updatedAt: now,
+    userId: ADMIN_USER.id,
+  })
+
+  statementInsertCharacterAttributes.run({
+    appearance: 0,
+    characterId,
+    constitution: 0,
+    createdAt: now,
+    dexterity: 0,
+    education: 0,
+    intelligence: 0,
+    luck: 0,
+    size: 0,
+    strength: 0,
+    updatedAt: now,
+    willpower: 0,
+  })
+
+  return characterId
+}
+
 function createRoomConnectionMap(roomId) {
   let connections = roomConnections.get(roomId)
 
@@ -930,6 +1253,36 @@ function sanitiseCharacterName(value) {
   return characterName.slice(0, MAX_CHARACTER_NAME_LENGTH)
 }
 
+function normaliseAvatarDataUrl(value) {
+  const avatarDataUrl = String(value ?? '').trim()
+
+  if (avatarDataUrl === '') {
+    return {
+      avatarDataUrl: null,
+      error: null,
+    }
+  }
+
+  if (avatarDataUrl.length > MAX_AVATAR_DATA_URL_LENGTH) {
+    return {
+      avatarDataUrl: null,
+      error: '头像图片过大，请换一张更小的图片。',
+    }
+  }
+
+  if (!/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/iu.test(avatarDataUrl)) {
+    return {
+      avatarDataUrl: null,
+      error: '头像数据无效，请重新上传图片。',
+    }
+  }
+
+  return {
+    avatarDataUrl,
+    error: null,
+  }
+}
+
 function sanitiseAttributeValue(value) {
   const parsed = Number.parseInt(String(value ?? '').trim(), 10)
 
@@ -945,6 +1298,12 @@ function normaliseSequence(value) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0
 }
 
+function normalisePresentationMode(value) {
+  return value === CHAT_PRESENTATION_KP_NARRATION
+    ? CHAT_PRESENTATION_KP_NARRATION
+    : CHAT_PRESENTATION_BUBBLE
+}
+
 function serialiseMessage(row) {
   return {
     body: row.body,
@@ -955,6 +1314,10 @@ function serialiseMessage(row) {
     roomId: row.roomId,
     sequence: row.sequence,
     sessionId: row.sessionId ?? null,
+    speakerAvatarDataUrl: row.speakerAvatarDataUrl ?? null,
+    speakerCharacterId: row.speakerCharacterId ?? null,
+    speakerDisplayMode: normalisePresentationMode(row.speakerDisplayMode),
+    speakerName: row.speakerName ?? row.nickname,
   }
 }
 
@@ -981,9 +1344,11 @@ function serialiseCharacter(row) {
       strength: row.strength,
       willpower: row.willpower,
     },
+    avatarDataUrl: row.avatarDataUrl ?? null,
     id: row.id,
     isDefault: row.isDefault === 1,
     name: row.name,
+    presentationMode: normalisePresentationMode(row.presentationMode),
     status: row.status,
   }
 }
@@ -998,8 +1363,30 @@ function serialiseRoom(row) {
   }
 }
 
+function isAdminUser(userId) {
+  return getCurrentUser(userId)?.role === 'admin'
+}
+
 function getRoomList() {
   return statementSelectRooms.all(PUBLIC_ROOM.id).map(serialiseRoom)
+}
+
+function getRoomListForUser(userId) {
+  if (isAdminUser(userId)) {
+    return getRoomList()
+  }
+
+  return statementSelectRoomsForUser.all(userId, PUBLIC_ROOM.id).map(serialiseRoom)
+}
+
+function getAccessibleRoomForUser(userId, roomId) {
+  if (isAdminUser(userId)) {
+    const room = statementSelectRoom.get(roomId)
+    return room ? serialiseRoom(room) : null
+  }
+
+  const room = statementSelectAccessibleRoomForUser.get(userId, roomId)
+  return room ? serialiseRoom(room) : null
 }
 
 function createRoomId() {
@@ -1149,6 +1536,14 @@ function createCharacterCardForUser(userId, payload) {
     }
   }
 
+  const avatarState = normaliseAvatarDataUrl(payload?.avatarDataUrl)
+
+  if (avatarState.error) {
+    return {
+      error: avatarState.error,
+    }
+  }
+
   const existingCharacters = getCharacterCardsForUser(userId)
   const attributes = normaliseCharacterAttributes(payload?.attributes)
   const characterId = createCharacterId()
@@ -1159,6 +1554,8 @@ function createCharacterCardForUser(userId, payload) {
     id: characterId,
     isDefault: existingCharacters.length === 0 ? 1 : 0,
     name,
+    avatarDataUrl: avatarState.avatarDataUrl,
+    presentationMode: CHAT_PRESENTATION_BUBBLE,
     status: 'active',
     updatedAt: now,
     userId,
@@ -1192,6 +1589,14 @@ function updateCharacterCardForUser(userId, payload) {
     }
   }
 
+  const avatarState = normaliseAvatarDataUrl(payload?.avatarDataUrl)
+
+  if (avatarState.error) {
+    return {
+      error: avatarState.error,
+    }
+  }
+
   const existingCharacter = statementSelectCharacterCardByIdForUser.get(characterId, userId)
 
   if (!existingCharacter) {
@@ -1206,6 +1611,7 @@ function updateCharacterCardForUser(userId, payload) {
   statementUpdateCharacterCard.run({
     id: characterId,
     name,
+    avatarDataUrl: avatarState.avatarDataUrl,
     updatedAt,
     userId,
   })
@@ -1287,7 +1693,17 @@ function persistSession(sessionId, nickname, userId) {
   })
 }
 
-function persistMessage({ roomId, sessionId = null, nickname, kind, body }) {
+function persistMessage({
+  roomId,
+  sessionId = null,
+  nickname,
+  kind,
+  body,
+  speakerAvatarDataUrl = null,
+  speakerCharacterId = null,
+  speakerDisplayMode = CHAT_PRESENTATION_BUBBLE,
+  speakerName,
+}) {
   const messageId = crypto.randomUUID()
   const createdAt = Date.now()
 
@@ -1296,6 +1712,10 @@ function persistMessage({ roomId, sessionId = null, nickname, kind, body }) {
     roomId,
     sessionId,
     nickname,
+    speakerAvatarDataUrl,
+    speakerCharacterId,
+    speakerDisplayMode,
+    speakerName,
     kind,
     body,
     createdAt,
@@ -1310,6 +1730,41 @@ function persistMessage({ roomId, sessionId = null, nickname, kind, body }) {
     roomId,
     sequence: Number(result.lastInsertRowid),
     sessionId,
+    speakerAvatarDataUrl,
+    speakerCharacterId,
+    speakerDisplayMode,
+    speakerName,
+  }
+}
+
+function resolveActiveSpeakerSnapshot(state) {
+  const fallbackSpeakerName = state.nickname === '' ? '未设置角色' : state.nickname
+
+  if (state.userId === '' || state.activeCharacterId === '') {
+    return {
+      speakerAvatarDataUrl: null,
+      speakerCharacterId: null,
+      speakerDisplayMode: CHAT_PRESENTATION_BUBBLE,
+      speakerName: fallbackSpeakerName,
+    }
+  }
+
+  const character = statementSelectCharacterCardByIdForUser.get(state.activeCharacterId, state.userId)
+
+  if (!character) {
+    return {
+      speakerAvatarDataUrl: null,
+      speakerCharacterId: null,
+      speakerDisplayMode: CHAT_PRESENTATION_BUBBLE,
+      speakerName: fallbackSpeakerName,
+    }
+  }
+
+  return {
+    speakerAvatarDataUrl: character.avatarDataUrl ?? null,
+    speakerCharacterId: character.id,
+    speakerDisplayMode: normalisePresentationMode(character.presentationMode),
+    speakerName: character.name,
   }
 }
 
@@ -1335,19 +1790,11 @@ function sendJson(socket, payload) {
 }
 
 function broadcastRooms() {
-  const payload = {
-    rooms: getRoomList(),
-    type: 'rooms',
-  }
-
-  const sockets = new Set()
-
   for (const connection of sessionConnections.values()) {
-    sockets.add(connection.socket)
-  }
-
-  for (const socket of sockets) {
-    sendJson(socket, payload)
+    sendJson(connection.socket, {
+      rooms: getRoomListForUser(connection.userId),
+      type: 'rooms',
+    })
   }
 }
 
@@ -1443,7 +1890,7 @@ function detachSessionFromRoom(state, socket) {
 function attachSessionToRoom(state, socket, payload) {
   const nickname = sanitiseNickname(payload.nickname)
   const sessionId = String(payload.sessionId ?? '').trim()
-  const roomId = String(payload.roomId ?? '').trim() || PUBLIC_ROOM.id
+  let roomId = String(payload.roomId ?? '').trim() || PUBLIC_ROOM.id
 
   if (state.userId === '') {
     sendJson(socket, {
@@ -1461,11 +1908,20 @@ function attachSessionToRoom(state, socket, payload) {
     return
   }
 
-  const room = statementSelectRoom.get(roomId)
+  let room = getAccessibleRoomForUser(state.userId, roomId)
+
+  if (!room) {
+    const fallbackRoom = getRoomListForUser(state.userId)[0] ?? null
+
+    if (fallbackRoom) {
+      room = fallbackRoom
+      roomId = fallbackRoom.id
+    }
+  }
 
   if (!room) {
     sendJson(socket, {
-      message: '目标聊天室不存在。',
+      message: '当前账号还没有任何可进入的聊天室权限。',
       type: 'error',
     })
     return
@@ -1487,6 +1943,7 @@ function attachSessionToRoom(state, socket, payload) {
   sessionConnections.set(sessionId, {
     roomId,
     socket,
+    userId: state.userId,
   })
 
   state.joined = true
@@ -1507,8 +1964,8 @@ function attachSessionToRoom(state, socket, payload) {
   const { activeCharacterId, characterCards } = resolveCharacterState(sessionId, state.userId)
   state.activeCharacterId = activeCharacterId ?? ''
 
-  const rooms = getRoomList()
-  const activeRoom = rooms.find((entry) => entry.id === roomId) ?? serialiseRoom(room)
+  const rooms = getRoomListForUser(state.userId)
+  const activeRoom = rooms.find((entry) => entry.id === roomId) ?? room
 
   sendJson(socket, {
     activeCharacterId,
@@ -1565,6 +2022,7 @@ function handleCreateRoom(state, socket, payload) {
     id: roomId,
     name: roomName,
   })
+  ensureRoomMembership(roomId, state.userId, 'owner')
 
   attachSessionToRoom(state, socket, {
     afterSequence: 0,
@@ -1713,13 +2171,15 @@ function handleDiceCommand(state, socket, body) {
   const targetValue = character[command.attributeKey]
   const rollValue = crypto.randomInt(1, 101)
   const resultRank = resolveCheckRank(rollValue, targetValue)
+  const speakerSnapshot = resolveActiveSpeakerSnapshot(state)
 
   const message = persistMessage({
-    body: `${character.name} 进行了 ${command.attributeLabel} 检定：1d100=${rollValue} / ${targetValue}\n结果：${resultRank}`,
+    body: `${command.attributeLabel} 检定：1d100=${rollValue} / ${targetValue}\n结果：${resultRank}`,
     kind: 'dice',
     nickname: state.nickname,
     roomId: state.roomId,
     sessionId: state.sessionId,
+    ...speakerSnapshot,
   })
 
   broadcastToRoom(state.roomId, {
@@ -1753,12 +2213,15 @@ function handleChatMessage(state, socket, payload) {
     return
   }
 
+  const speakerSnapshot = resolveActiveSpeakerSnapshot(state)
+
   const message = persistMessage({
     body,
     kind: 'user',
     nickname: state.nickname,
     roomId: state.roomId,
     sessionId: state.sessionId,
+    ...speakerSnapshot,
   })
 
   broadcastToRoom(state.roomId, {
@@ -2095,6 +2558,12 @@ server.listen(CHAT_PORT, CHAT_HOST, () => {
     console.log(`管理员访问密钥文件: ${adminAccessKeySeed.filePath}`)
   } else {
     console.log('管理员访问密钥已存在于数据库中；如需重置，请设置 CHAT_ADMIN_ACCESS_KEY 后重启服务。')
+  }
+
+  if (seededUserAccessKeys.filePath) {
+    console.log(`种子用户访问密钥文件: ${seededUserAccessKeys.filePath}`)
+  } else {
+    console.log('种子用户访问密钥已存在于数据库中；如需调整，请显式更新种子用户配置。')
   }
 
   if (CHAT_HOST === '0.0.0.0') {

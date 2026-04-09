@@ -1,5 +1,5 @@
 {
-  "name": "timeline",
+  "name": "morosonder",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -23,6 +23,7 @@
     "vite": "^6.4.1"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.5",
     "@tiptap/core": "^3.21.0",
     "@tiptap/extension-bubble-menu": "^3.21.0",
     "@tiptap/extension-color": "^3.21.0",

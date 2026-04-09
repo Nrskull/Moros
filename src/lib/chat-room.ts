@@ -10,6 +10,7 @@ export const PUBLIC_CHAT_ROOM_ID = 'public'
 
 export type ChatMessageKind = 'system' | 'user' | 'dice'
 export type ChatConnectionState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+export type ChatPresentationMode = 'bubble' | 'kp-narration'
 
 export interface ChatUser {
   displayName: string
@@ -33,9 +34,11 @@ export interface ChatCharacterAttributes {
 
 export interface ChatCharacterCard {
   attributes: ChatCharacterAttributes
+  avatarDataUrl: string | null
   id: string
   isDefault: boolean
   name: string
+  presentationMode: ChatPresentationMode
   status: string
 }
 
@@ -48,6 +51,10 @@ export interface ChatMessage {
   roomId: string
   sequence: number
   sessionId: string | null
+  speakerAvatarDataUrl: string | null
+  speakerCharacterId: string | null
+  speakerDisplayMode: ChatPresentationMode
+  speakerName: string
 }
 
 export interface ChatMember {

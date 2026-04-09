@@ -75,10 +75,21 @@ code {
   padding: 36px 0 64px;
 }
 
+.shell.is-home {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
 .page-scene-stack {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
+}
+
+.page-scene-stack.is-home {
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .page-scene {
@@ -88,6 +99,11 @@ code {
   will-change: opacity;
 }
 
+.page-scene.is-home {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 .topbar {
   display: flex;
   flex-wrap: wrap;
@@ -95,6 +111,15 @@ code {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 18px;
+}
+
+.topbar.is-home {
+  position: fixed;
+  top: 18px;
+  left: 18px;
+  right: 18px;
+  z-index: 30;
+  margin-bottom: 0;
 }
 
 .shell::before {
@@ -112,7 +137,6 @@ code {
 .hero-panel,
 .board {
   position: relative;
-  border: 1px solid rgba(223, 228, 234, 0.9);
   border-radius: 28px;
   background: var(--panel);
   backdrop-filter: blur(18px);
@@ -506,6 +530,10 @@ code {
 
 .board {
   padding: 28px 28px 32px;
+}
+
+.home-page {
+  min-height: min(72vh, 760px);
 }
 
 .board-head {
@@ -1739,19 +1767,22 @@ code {
   min-height: 360px;
   max-height: min(60vh, 760px);
   overflow-y: auto;
-  padding-right: 6px;
+  padding-right: 4px;
 }
 
 .chat-message-list {
-  display: grid;
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-inline: 14px;
 }
 
 .chat-system-message {
   display: grid;
+  align-self: center;
   justify-items: center;
   gap: 4px;
-  padding: 8px 12px;
+  padding: 4px 10px;
 }
 
 .chat-system-message span {
@@ -1763,44 +1794,146 @@ code {
   line-height: 1;
 }
 
-.chat-message-item {
-  display: grid;
-  justify-items: start;
-  gap: 6px;
+.chat-message-narration {
+  /* 1. 容器级别的居中与宽度收缩 */
+  align-self: center;
+  width: fit-content;
+  max-width: 85%; /* 稍微收窄一点，不要贴到屏幕边缘 */
+  margin-inline: auto;
+  
+  /* 2. 增加一点质感，让它看起来像一个独立的旁白块 */
+  padding: 12px 24px;
+  background-color: #f9fafb; /* 极浅的灰色背景 */
+  border-radius: 12px; /* 圆角 */
+  border: 1px solid #f3f4f6; /* 极浅的边框 */
+
+  /* 3. 字体控制：缩小、变灰、左对齐（绝对不要文字居中！） */
+  text-align: left; 
+  font-size: 0.875rem; /* 14px，让它比正常聊天字号小一点 */
+  color: #6b7280; /* 中灰色，降低视觉层级 */
+  line-height: 1.6;
 }
 
-.chat-message-item.is-own {
-  justify-items: end;
+.chat-message-narration p {
+  margin: 0; /* 清除默认的段落间距 */
+}
+
+/* 如果有多段旁白，段落之间稍微留一点点空隙 */
+.chat-message-narration p + p {
+  margin-top: 8px;
+}
+
+.chat-message-narration.has-ruling-tone p {
+  color: #6b5222;
+}
+
+.chat-message-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+}
+
+.chat-message-group.is-own {
+  flex-direction: row-reverse;
+}
+
+.chat-message-avatar-slot {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 40px;
+  min-width: 40px;
+  flex-shrink: 0;
+}
+
+.chat-message-avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(242, 246, 250, 0.94));
+  color: #425163;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.chat-message-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-message-column {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.chat-message-group.is-own .chat-message-column {
+  align-items: flex-end;
 }
 
 .chat-message-meta {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-}
-
-.chat-message-kind {
-  display: inline-flex;
-  margin-bottom: 8px;
-  padding: 0.28rem 0.56rem;
-  border-radius: 999px;
-  background: rgba(198, 178, 120, 0.18);
-  color: #6f5120;
+  gap: 6px;
+  padding-inline: 2px;
+  color: var(--muted);
   font-size: 0.72rem;
   line-height: 1;
 }
 
+.chat-message-group.is-own .chat-message-meta {
+  justify-content: flex-end;
+}
+
+.chat-message-meta strong {
+  color: #425163;
+  font-size: 0.74rem;
+  line-height: 1;
+}
+
+.chat-message-bubble-list {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.chat-message-group.is-own .chat-message-bubble-list {
+  align-items: flex-end;
+}
+
+.chat-message-kind {
+  display: inline-flex;
+  margin-bottom: 6px;
+  padding: 0.24rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(198, 178, 120, 0.18);
+  color: #6f5120;
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
 .chat-message-bubble {
-  max-width: min(100%, 38rem);
-  padding: 0.82rem 0.96rem;
+  width: fit-content;
+  max-width: min(80%, 40rem);
+  padding: 0.5rem 1rem;
   border: 1px solid rgba(223, 228, 234, 0.9);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 10px 22px rgba(16, 24, 40, 0.04);
 }
 
-.chat-message-item.is-own .chat-message-bubble {
-  border-color: color-mix(in srgb, var(--accent) 34%, rgba(197, 206, 216, 0.9));
+.chat-message-group.is-own .chat-message-bubble {
   background: var(--accent-surface);
 }
 
@@ -1812,9 +1945,14 @@ code {
 .chat-message-bubble p {
   margin: 0;
   color: var(--text);
-  line-height: 1.56;
+  line-height: 1.46;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.chat-message-text.is-indent-active {
+  text-indent: 2em;
 }
 
 .chat-new-message-chip {
@@ -1831,9 +1969,12 @@ code {
 
 .chat-composer {
   display: grid;
-  gap: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(223, 228, 234, 0.82);
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(223, 228, 234, 0.82);
+  border-radius: 22px;
+  background: rgba(252, 253, 255, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .chat-character-toolbar {
@@ -1843,16 +1984,17 @@ code {
 .chat-character-menu {
   position: relative;
   justify-self: start;
+  width: fit-content;
 }
 
 .chat-character-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 0.72rem 0.92rem;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0.58rem 0.78rem;
   border: 1px solid rgba(197, 206, 216, 0.9);
-  border-radius: 18px;
+  border-radius: 15px;
   background: rgba(255, 255, 255, 0.96);
   color: #1f2833;
   font: inherit;
@@ -1868,14 +2010,14 @@ code {
 .chat-character-dropdown {
   position: absolute;
   left: 0;
-  top: calc(100% + 10px);
+  top: calc(100% + 8px);
   z-index: 6;
   display: grid;
-  gap: 10px;
+  gap: 8px;
   width: min(360px, calc(100vw - 48px));
-  padding: 12px;
+  padding: 10px;
   border: 1px solid rgba(223, 228, 234, 0.92);
-  border-radius: 20px;
+  border-radius: 18px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 18px 44px rgba(16, 24, 40, 0.1);
 }
@@ -1897,7 +2039,7 @@ code {
 .chat-character-option {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 8px;
   align-items: stretch;
 }
 
@@ -1913,8 +2055,8 @@ code {
 .chat-character-option-main {
   display: grid;
   gap: 4px;
-  padding: 0.78rem 0.92rem;
-  border-radius: 16px;
+  padding: 0.68rem 0.82rem;
+  border-radius: 14px;
   text-align: left;
 }
 
@@ -1930,9 +2072,9 @@ code {
 }
 
 .chat-character-option-edit {
-  width: 46px;
-  min-width: 46px;
-  border-radius: 16px;
+  width: 42px;
+  min-width: 42px;
+  border-radius: 14px;
   font-size: 1rem;
 }
 
@@ -1943,8 +2085,8 @@ code {
 
 .chat-character-create {
   width: 100%;
-  padding: 0.8rem 0.92rem;
-  border-radius: 16px;
+  padding: 0.7rem 0.84rem;
+  border-radius: 14px;
   text-align: left;
 }
 
@@ -1971,7 +2113,7 @@ code {
 .chat-composer-field,
 .chat-nickname-field {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .chat-composer-field span,
@@ -1992,9 +2134,9 @@ code {
 }
 
 .chat-composer-field textarea {
-  min-height: 108px;
-  padding: 0.92rem 1rem;
-  line-height: 1.56;
+  min-height: 88px;
+  padding: 0.76rem 0.88rem;
+  line-height: 1.48;
   resize: vertical;
 }
 
@@ -2095,6 +2237,91 @@ code {
   width: min(100%, 640px);
 }
 
+.chat-character-avatar-block {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(223, 228, 234, 0.88);
+  border-radius: 20px;
+  background: rgba(248, 250, 252, 0.82);
+}
+
+.chat-character-avatar-block p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.42;
+}
+
+.chat-character-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.chat-character-avatar-picker {
+  display: grid;
+  place-items: center;
+  width: 104px;
+  height: 104px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px dashed rgba(197, 206, 216, 0.96);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  cursor: pointer;
+}
+
+.chat-character-avatar-picker img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-character-avatar-picker:focus {
+  outline: none;
+  border-color: var(--accent-border-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.chat-character-avatar-placeholder {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.chat-character-avatar-placeholder strong {
+  font-size: 1.8rem;
+  line-height: 1;
+  color: #425163;
+}
+
+.chat-character-avatar-placeholder span,
+.chat-character-avatar-copy span {
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.chat-character-avatar-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.chat-character-avatar-copy strong {
+  color: #1f2833;
+  font-size: 0.88rem;
+}
+
+.chat-character-avatar-copy span {
+  color: var(--muted);
+  max-width: 18rem;
+}
+
+.chat-character-avatar-input {
+  display: none;
+}
+
 .chat-character-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2109,6 +2336,10 @@ code {
 .chat-nickname-dialog h3,
 .chat-nickname-dialog p {
   margin: 0;
+}
+
+.chat-character-avatar-block p {
+  margin-top: 6px;
 }
 
 .toolbar-action,
@@ -3851,11 +4082,26 @@ code {
     max-height: 52vh;
   }
 
+  .chat-message-bubble {
+    max-width: min(84%, 34rem);
+  }
+
+  .chat-message-narration {
+    max-width: 32rem;
+    width: min(100%, 32rem);
+    padding-inline: 0.2rem;
+  }
+
   .chat-composer-actions,
   .chat-nickname-actions,
   .chat-panel-head-actions {
     flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  .chat-character-avatar-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .chat-character-grid {

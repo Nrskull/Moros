@@ -1,6 +1,6 @@
-# Timeline
+# Morosonder
 
-本仓库当前实现的是一个基于 `Svelte + TypeScript + Vite` 的跑团功能网站。
+本仓库当前实现的是一个基于 `Svelte + TypeScript + Vite` 的跑团功能网站，站点名为 `Morosonder`。
 
 ## 当前范围
 

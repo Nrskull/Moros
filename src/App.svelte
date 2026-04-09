@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { spring } from 'svelte/motion'
   import { fade } from 'svelte/transition'
   import {
@@ -9,12 +10,18 @@
   import AgeChroniclePage from './lib/AgeChroniclePage.svelte'
   import ChatRoomPage from './lib/ChatRoomPage.svelte'
   import EventDetailPage from './lib/EventDetailPage.svelte'
+  import HomePage from './lib/HomePage.svelte'
   import LogWorkbenchPage from './lib/LogWorkbenchPage.svelte'
   import TimelineAxis from './lib/TimelineAxis.svelte'
   import TimelineEventCard from './lib/TimelineEventCard.svelte'
   import WorldviewHero from './lib/WorldviewHero.svelte'
   import { mockEvents } from './lib/mock-events'
   import { seaFogIn, seaFogOut } from './lib/transitions'
+  import {
+    buildAppRouteHref,
+    parseAppRoute,
+    type AppPage,
+  } from './lib/app-router'
   import {
     createAdaptiveTimelineTicks,
     createTimelineLayout,
@@ -29,7 +36,6 @@
   } from './lib/worldview-themes'
 
   type ZoomDensityMode = 'overview' | 'compact' | 'detail'
-  type AppPage = 'timeline' | 'age-chronicle' | 'log-workbench' | 'chat-room' | 'event-detail'
   type DrawerMode = 'none' | 'event' | 'worldview'
   type EventEditorMode = 'create' | 'edit'
   type EventDragMode = 'move' | 'resize-end'
@@ -247,8 +253,10 @@
   let isWorldviewMenuOpen = false
   let isTagFilterOpen = false
   let zoomLevel = 1
-  let activePage: AppPage = 'timeline'
+  let activePage: AppPage = 'home'
   let detailEventId = ''
+  let routeWorldviewName: string | null = selectedWorldview || null
+  let hasMountedRouter = false
   let timelineMode: TimelineMode = 'view'
   let tagFilterMode: TagFilterMode = 'highlight'
   let selectedTagFilters: string[] = []
@@ -265,7 +273,7 @@
   let eventEditorMode: EventEditorMode = 'create'
   let editingEventId = ''
 
-  let projectTitle = '各种跑团时间轴'
+  let projectTitle = 'Morosonder'
   let boardHeading = '时间轴'
   let boardNote = '支持世界观切换、语义缩放、拖拽漫游、卡片拖拽改期，以及抽屉式事件编辑。'
 
@@ -549,7 +557,9 @@
       },
     ]
     selectedWorldview = name
+    routeWorldviewName = name
     closeDrawer()
+    replaceRouteFromState()
   }
 
   function saveDraftEvent(): void {
@@ -587,12 +597,14 @@
     }
 
     selectedWorldview = worldview
+    routeWorldviewName = worldview
     activeEventId = eventId
     hoveredEventId = eventId
     drawerMode = 'none'
     editingEventId = ''
     activeCardBounce.set(1, { hard: true })
     activeCardBounce.set(0)
+    replaceRouteFromState()
   }
 
   function deleteEvent(eventId: string): void {
@@ -680,6 +692,105 @@
     }
   }
 
+  function getRouteWorldviewName(targetPage: AppPage = activePage): string | null {
+    if (['home', 'chat-room'].includes(targetPage)) {
+      return null
+    }
+
+    const worldviewName = selectedWorldview || worldviewOptions[0] || DEFAULT_WORLDVIEW_NAME
+    return worldviewName.trim() === '' ? null : worldviewName
+  }
+
+  function getCurrentRouteHref(targetPage: AppPage = activePage, targetDetailEventId = detailEventId): string {
+    return buildAppRouteHref({
+      eventId: targetDetailEventId,
+      page: targetPage,
+      worldviewName: getRouteWorldviewName(targetPage),
+    })
+  }
+
+  function replaceRouteFromState(targetPage: AppPage = activePage, targetDetailEventId = detailEventId): void {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const nextHref = getCurrentRouteHref(targetPage, targetDetailEventId)
+    const currentHref = `${window.location.pathname}${window.location.search}`
+
+    if (currentHref === nextHref) {
+      return
+    }
+
+    window.history.replaceState({}, '', nextHref)
+  }
+
+  function pushRouteFromState(targetPage: AppPage = activePage, targetDetailEventId = detailEventId): void {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const nextHref = getCurrentRouteHref(targetPage, targetDetailEventId)
+    const currentHref = `${window.location.pathname}${window.location.search}`
+
+    if (currentHref === nextHref) {
+      return
+    }
+
+    window.history.pushState({}, '', nextHref)
+  }
+
+  function applyRoute(route: { eventId: string; page: AppPage; worldviewName: string | null }): void {
+    const detailEvent =
+      route.page === 'event-detail'
+        ? timelineEvents.find((event) => event.id === route.eventId) ?? null
+        : null
+
+    activePage = route.page
+    detailEventId = route.page === 'event-detail' ? route.eventId : ''
+    routeWorldviewName = route.worldviewName ?? detailEvent?.worldview ?? null
+
+    if (route.page !== 'event-detail') {
+      drawerMode = drawerMode === 'event' ? 'none' : drawerMode
+    }
+
+    if (['home', 'chat-room'].includes(route.page)) {
+      isWorldviewMenuOpen = false
+      isTagFilterOpen = false
+    }
+  }
+
+  function syncRouteWithLocation(replace = false): void {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const route = parseAppRoute(window.location)
+    applyRoute(route)
+
+    if (replace) {
+      replaceRouteFromState(route.page, route.eventId)
+    }
+  }
+
+  function handleWindowPopState(): void {
+    syncRouteWithLocation(false)
+  }
+
+  function navigateToPage(page: AppPage, options?: { replace?: boolean }): void {
+    activePage = page
+
+    if (page !== 'event-detail') {
+      detailEventId = ''
+    }
+
+    if (options?.replace) {
+      replaceRouteFromState(page, detailEventId)
+      return
+    }
+
+    pushRouteFromState(page, detailEventId)
+  }
+
   function normaliseIntervalEnd(start: number, end: number): number {
     return end > start ? end : start + 1
   }
@@ -713,8 +824,11 @@
   ]
   $: if (worldviewOptions.length === 0) {
     selectedWorldview = ''
+    routeWorldviewName = null
     activeEventId = ''
     hoveredEventId = ''
+  } else if (routeWorldviewName && worldviewOptions.includes(routeWorldviewName)) {
+    selectedWorldview = routeWorldviewName
   } else if (!worldviewOptions.includes(selectedWorldview)) {
     selectedWorldview = worldviewOptions[0]
   }
@@ -844,7 +958,16 @@
     detailEventId !== '' &&
     !timelineEvents.some((event) => event.id === detailEventId)
   ) {
-    activePage = 'timeline'
+    navigateToPage('timeline', { replace: true })
+  }
+  $: if (
+    hasMountedRouter &&
+    !['home', 'chat-room'].includes(activePage) &&
+    worldviewOptions.length > 0 &&
+    routeWorldviewName !== selectedWorldview
+  ) {
+    routeWorldviewName = selectedWorldview
+    replaceRouteFromState()
   }
 
   function toggleEvent(event: PositionedTimelineEvent): void {
@@ -872,16 +995,16 @@
     }
 
     selectedWorldview = sourceEvent.worldview
+    routeWorldviewName = sourceEvent.worldview
     activeEventId = eventId
     hoveredEventId = eventId
     detailEventId = eventId
     drawerMode = 'none'
-    activePage = 'event-detail'
+    navigateToPage('event-detail')
   }
 
   function closeEventDetail(): void {
-    activePage = 'timeline'
-    detailEventId = ''
+    navigateToPage('timeline', { replace: true })
   }
 
   function saveDetailEvent(draft: {
@@ -921,13 +1044,13 @@
     deleteEvent(targetId)
 
     if (!timelineEvents.some((event) => event.id === targetId)) {
-      activePage = 'timeline'
-      detailEventId = ''
+      navigateToPage('timeline', { replace: true })
     }
   }
 
   function changeWorldview(worldview: string): void {
     selectedWorldview = worldview
+    routeWorldviewName = worldview
     isWorldviewMenuOpen = false
     isTagFilterOpen = false
     activeEventId = ''
@@ -935,8 +1058,11 @@
     timelineScrollElement?.scrollTo({ left: 0, behavior: 'smooth' })
 
     if (activePage === 'event-detail') {
-      closeEventDetail()
+      navigateToPage('timeline')
+      return
     }
+
+    pushRouteFromState()
   }
 
   function changeTimelineMode(mode: TimelineMode): void {
@@ -1245,31 +1371,45 @@
   function handleWindowPointerCancel(event: PointerEvent): void {
     handleWindowPointerUp(event)
   }
+
+  onMount(() => {
+    syncRouteWithLocation(true)
+    hasMountedRouter = true
+  })
 </script>
 
 <svelte:head>
   <title>{projectTitle}</title>
   <meta
     name="description"
-    content="使用 Svelte 构建的本地优先各种跑团时间轴、角色年龄编年与日志工坊原型。"
+    content="Morosonder：面向 CoC 跑团的世界观、时间轴、角色年龄编年、日志工坊与聊天室网站。"
   />
 </svelte:head>
 
 <svelte:window
   onclick={handleWindowClick}
   onkeydown={handleWindowKeydown}
+  onpopstate={handleWindowPopState}
   onpointercancel={handleWindowPointerCancel}
   onpointerup={handleWindowPointerUp}
 />
 
-<main class="shell" style={themeStyle}>
-  <div class="topbar">
+<main class:is-home={activePage === 'home'} class="shell" style={themeStyle}>
+  <div class:is-home={activePage === 'home'} class="topbar">
     <nav class="page-switcher" aria-label="页面切换">
+      <button
+        class:is-current={activePage === 'home'}
+        class="page-switch"
+        type="button"
+        onclick={() => navigateToPage('home')}
+      >
+        首页
+      </button>
       <button
         class:is-current={activePage === 'timeline'}
         class="page-switch"
         type="button"
-        onclick={() => (activePage = 'timeline')}
+        onclick={() => navigateToPage('timeline')}
       >
         故事时间轴
       </button>
@@ -1277,7 +1417,7 @@
         class:is-current={activePage === 'age-chronicle'}
         class="page-switch"
         type="button"
-        onclick={() => (activePage = 'age-chronicle')}
+        onclick={() => navigateToPage('age-chronicle')}
       >
         角色年龄编年
       </button>
@@ -1285,7 +1425,7 @@
         class:is-current={activePage === 'log-workbench'}
         class="page-switch"
         type="button"
-        onclick={() => (activePage = 'log-workbench')}
+        onclick={() => navigateToPage('log-workbench')}
       >
         日志展示
       </button>
@@ -1293,7 +1433,7 @@
         class:is-current={activePage === 'chat-room'}
         class="page-switch"
         type="button"
-        onclick={() => (activePage = 'chat-room')}
+        onclick={() => navigateToPage('chat-room')}
       >
         聊天室
       </button>
@@ -1304,7 +1444,7 @@
       {/if}
     </nav>
 
-    {#if activePage !== 'chat-room'}
+    {#if !['home', 'chat-room'].includes(activePage)}
       <div bind:this={worldviewMenuElement} class="worldview-dropdown">
       <button
         aria-expanded={isWorldviewMenuOpen}
@@ -1345,10 +1485,12 @@
     {/if}
   </div>
 
-  <div class="page-scene-stack">
+  <div class:is-home={activePage === 'home'} class="page-scene-stack">
     {#key activePage}
-      <div class="page-scene" in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}>
-    {#if activePage === 'timeline'}
+      <div class:is-home={activePage === 'home'} class="page-scene" in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}>
+    {#if activePage === 'home'}
+      <HomePage />
+    {:else if activePage === 'timeline'}
       <WorldviewHero
         description={activeWorldviewContent.description}
         hasCover={currentWorldviewTheme.coverImage !== ''}
