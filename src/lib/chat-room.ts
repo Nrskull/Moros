@@ -51,6 +51,7 @@ export interface ChatMessage {
   roomId: string
   sequence: number
   sessionId: string | null
+  userId: string | null
   speakerAvatarDataUrl: string | null
   speakerCharacterId: string | null
   speakerDisplayMode: ChatPresentationMode

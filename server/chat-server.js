@@ -24,7 +24,7 @@ const ADMIN_USER = {
 }
 const SEEDED_CHAT_USERS = [
   {
-    accessKey: 'morosonder-edie-c568b5d51b9f3515',
+    accessKey: 'morosonder-edie-b689feec9a57cd66',
     displayName: 'edie',
     handle: 'edie',
     id: 'user_edie',
@@ -32,7 +32,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
-    accessKey: 'morosonder-lateraven-30e39a38eea01c3e',
+    accessKey: 'morosonder-lateraven-aaf9bb2e29039771',
     displayName: 'lateraven',
     handle: 'lateraven',
     id: 'user_lateraven',
@@ -40,7 +40,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
-    accessKey: 'morosonder-sakin-a31b6e26d65fa0fb',
+    accessKey: 'morosonder-sakin-a5fd5d7b9e61eca2',
     displayName: 'sakin',
     handle: 'sakin',
     id: 'user_sakin',
@@ -48,7 +48,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
-    accessKey: 'morosonder-chen-52afeb1990910cd0',
+    accessKey: 'morosonder-chen-6f9ff9edec5cbabb',
     displayName: 'chen',
     handle: 'chen',
     id: 'user_chen',
@@ -56,7 +56,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
-    accessKey: 'morosonder-eshis-e0ebb010aa058e5f',
+    accessKey: 'morosonder-eshis-23e25fa8b1d4970a',
     displayName: 'eshis',
     handle: 'eshis',
     id: 'user_eshis',
@@ -64,7 +64,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
-    accessKey: 'morosonder-lotka-628ba14547c2b0e3',
+    accessKey: 'morosonder-lotka-1864819d10348545',
     displayName: 'Lotka',
     handle: 'lotka',
     id: 'user_lotka',
@@ -161,6 +161,7 @@ database.exec(`
     id TEXT NOT NULL UNIQUE,
     room_id TEXT NOT NULL,
     session_id TEXT,
+    user_id TEXT,
     nickname TEXT NOT NULL,
     speaker_name TEXT,
     speaker_character_id TEXT,
@@ -250,10 +251,23 @@ ensureColumn('sessions', 'user_id', 'user_id TEXT')
 ensureColumn('sessions', 'active_character_id', 'active_character_id TEXT')
 ensureColumn('character_cards', 'avatar_data_url', 'avatar_data_url TEXT')
 ensureColumn('character_cards', 'presentation_mode', `presentation_mode TEXT NOT NULL DEFAULT '${CHAT_PRESENTATION_BUBBLE}'`)
+ensureColumn('messages', 'user_id', 'user_id TEXT')
 ensureColumn('messages', 'speaker_name', 'speaker_name TEXT')
 ensureColumn('messages', 'speaker_character_id', 'speaker_character_id TEXT')
 ensureColumn('messages', 'speaker_avatar_data_url', 'speaker_avatar_data_url TEXT')
 ensureColumn('messages', 'speaker_display_mode', `speaker_display_mode TEXT NOT NULL DEFAULT '${CHAT_PRESENTATION_BUBBLE}'`)
+
+database.exec(`
+  UPDATE messages
+  SET user_id = (
+    SELECT sessions.user_id
+    FROM sessions
+    WHERE sessions.id = messages.session_id
+    LIMIT 1
+  )
+  WHERE user_id IS NULL
+    AND session_id IS NOT NULL
+`)
 
 const statementInsertRoom = database.prepare(`
   INSERT INTO rooms (id, name, created_at)
@@ -425,6 +439,31 @@ const statementSelectRoomsForUser = database.prepare(`
     rooms.created_at ASC
 `)
 
+const statementSelectManageableUsers = database.prepare(`
+  SELECT
+    id,
+    handle,
+    display_name AS displayName,
+    role,
+    status
+  FROM users
+  WHERE role != 'admin'
+    AND status = 'active'
+  ORDER BY display_name COLLATE NOCASE ASC, handle COLLATE NOCASE ASC
+`)
+
+const statementSelectRoomMembershipsForPermissions = database.prepare(`
+  SELECT
+    room_memberships.room_id AS roomId,
+    room_memberships.user_id AS userId,
+    room_memberships.role
+  FROM room_memberships
+  JOIN users ON users.id = room_memberships.user_id
+  WHERE users.role != 'admin'
+    AND users.status = 'active'
+  ORDER BY room_memberships.room_id ASC, room_memberships.created_at ASC
+`)
+
 const statementSelectAccessibleRoomForUser = database.prepare(`
   SELECT
     rooms.id,
@@ -437,6 +476,16 @@ const statementSelectAccessibleRoomForUser = database.prepare(`
   LIMIT 1
 `)
 
+const statementSelectRoomMembershipsForRoom = database.prepare(`
+  SELECT
+    room_memberships.user_id AS userId,
+    room_memberships.role
+  FROM room_memberships
+  JOIN users ON users.id = room_memberships.user_id
+  WHERE room_memberships.room_id = ?
+    AND users.role != 'admin'
+`)
+
 const statementCountRooms = database.prepare(`
   SELECT COUNT(*) AS count
   FROM rooms
@@ -446,6 +495,12 @@ const statementInsertRoomMembership = database.prepare(`
   INSERT INTO room_memberships (room_id, user_id, role, created_at)
   VALUES (@roomId, @userId, @role, @createdAt)
   ON CONFLICT(room_id, user_id) DO NOTHING
+`)
+
+const statementDeleteRoomMembership = database.prepare(`
+  DELETE FROM room_memberships
+  WHERE room_id = @roomId
+    AND user_id = @userId
 `)
 
 const statementUpsertSession = database.prepare(`
@@ -549,6 +604,7 @@ const statementInsertMessage = database.prepare(`
     id,
     room_id,
     session_id,
+    user_id,
     nickname,
     speaker_name,
     speaker_character_id,
@@ -562,6 +618,7 @@ const statementInsertMessage = database.prepare(`
     @id,
     @roomId,
     @sessionId,
+    @userId,
     @nickname,
     @speakerName,
     @speakerCharacterId,
@@ -725,44 +782,48 @@ const statementSelectNarrationCharacterForUser = database.prepare(`
 
 const statementSelectMessagesSince = database.prepare(`
   SELECT
-    sequence,
-    id,
-    room_id AS roomId,
-    session_id AS sessionId,
-    nickname,
-    speaker_name AS speakerName,
-    speaker_character_id AS speakerCharacterId,
-    speaker_avatar_data_url AS speakerAvatarDataUrl,
-    speaker_display_mode AS speakerDisplayMode,
-    kind,
-    body,
-    created_at AS createdAt
+    messages.sequence,
+    messages.id,
+    messages.room_id AS roomId,
+    messages.session_id AS sessionId,
+    COALESCE(messages.user_id, sessions.user_id) AS userId,
+    messages.nickname,
+    messages.speaker_name AS speakerName,
+    messages.speaker_character_id AS speakerCharacterId,
+    messages.speaker_avatar_data_url AS speakerAvatarDataUrl,
+    messages.speaker_display_mode AS speakerDisplayMode,
+    messages.kind,
+    messages.body,
+    messages.created_at AS createdAt
   FROM messages
-  WHERE room_id = ? AND kind != 'system' AND sequence > ?
+  LEFT JOIN sessions ON sessions.id = messages.session_id
+  WHERE messages.room_id = ? AND messages.kind != 'system' AND messages.sequence > ?
   ORDER BY sequence ASC
   LIMIT ?
 `)
 
 const statementSelectRecentMessages = database.prepare(`
   SELECT
-    sequence,
-    id,
-    room_id AS roomId,
-    session_id AS sessionId,
-    nickname,
-    speaker_name AS speakerName,
-    speaker_character_id AS speakerCharacterId,
-    speaker_avatar_data_url AS speakerAvatarDataUrl,
-    speaker_display_mode AS speakerDisplayMode,
-    kind,
-    body,
-    created_at AS createdAt
+    recent.sequence,
+    recent.id,
+    recent.room_id AS roomId,
+    recent.session_id AS sessionId,
+    COALESCE(recent.user_id, sessions.user_id) AS userId,
+    recent.nickname,
+    recent.speaker_name AS speakerName,
+    recent.speaker_character_id AS speakerCharacterId,
+    recent.speaker_avatar_data_url AS speakerAvatarDataUrl,
+    recent.speaker_display_mode AS speakerDisplayMode,
+    recent.kind,
+    recent.body,
+    recent.created_at AS createdAt
   FROM (
     SELECT
       sequence,
       id,
       room_id,
       session_id,
+      user_id,
       nickname,
       speaker_name,
       speaker_character_id,
@@ -775,7 +836,8 @@ const statementSelectRecentMessages = database.prepare(`
     WHERE room_id = ? AND kind != 'system'
     ORDER BY sequence DESC
     LIMIT ?
-  )
+  ) recent
+  LEFT JOIN sessions ON sessions.id = recent.session_id
   ORDER BY sequence ASC
 `)
 
@@ -1371,6 +1433,7 @@ function serialiseMessage(row) {
     roomId: row.roomId,
     sequence: row.sequence,
     sessionId: row.sessionId ?? null,
+    userId: row.userId ?? null,
     speakerAvatarDataUrl: row.speakerAvatarDataUrl ?? null,
     speakerCharacterId: row.speakerCharacterId ?? null,
     speakerDisplayMode: normalisePresentationMode(row.speakerDisplayMode),
@@ -1428,6 +1491,32 @@ function getRoomList() {
   return statementSelectRooms.all(PUBLIC_ROOM.id).map(serialiseRoom)
 }
 
+function getManageableUsers() {
+  return statementSelectManageableUsers.all().map(serialiseUser)
+}
+
+function getRoomPermissionState() {
+  const rooms = getRoomList()
+  const rows = statementSelectRoomMembershipsForPermissions.all()
+  const permissionsByRoomId = new Map(rooms.map((room) => [room.id, []]))
+
+  for (const row of rows) {
+    const allowedUserIds = permissionsByRoomId.get(row.roomId)
+
+    if (allowedUserIds) {
+      allowedUserIds.push(row.userId)
+      continue
+    }
+
+    permissionsByRoomId.set(row.roomId, [row.userId])
+  }
+
+  return rooms.map((room) => ({
+    roomId: room.id,
+    userIds: permissionsByRoomId.get(room.id) ?? [],
+  }))
+}
+
 function getRoomListForUser(userId) {
   if (isAdminUser(userId)) {
     return getRoomList()
@@ -1444,6 +1533,23 @@ function getAccessibleRoomForUser(userId, roomId) {
 
   const room = statementSelectAccessibleRoomForUser.get(userId, roomId)
   return room ? serialiseRoom(room) : null
+}
+
+function broadcastRoomPermissionStateToAdmins() {
+  const manageableUsers = getManageableUsers()
+  const roomPermissions = getRoomPermissionState()
+
+  for (const connection of sessionConnections.values()) {
+    if (!isAdminUser(connection.userId)) {
+      continue
+    }
+
+    sendJson(connection.socket, {
+      manageableUsers,
+      roomPermissions,
+      type: 'room_permissions_state',
+    })
+  }
 }
 
 function createRoomId() {
@@ -1753,6 +1859,7 @@ function persistSession(sessionId, nickname, userId) {
 function persistMessage({
   roomId,
   sessionId = null,
+  userId = null,
   nickname,
   kind,
   body,
@@ -1768,6 +1875,7 @@ function persistMessage({
     id: messageId,
     roomId,
     sessionId,
+    userId,
     nickname,
     speakerAvatarDataUrl,
     speakerCharacterId,
@@ -1787,6 +1895,7 @@ function persistMessage({
     roomId,
     sequence: Number(result.lastInsertRowid),
     sessionId,
+    userId,
     speakerAvatarDataUrl,
     speakerCharacterId,
     speakerDisplayMode,
@@ -2036,6 +2145,14 @@ function attachSessionToRoom(state, socket, payload) {
     type: 'joined',
   })
 
+  if (isAdminUser(state.userId)) {
+    sendJson(socket, {
+      manageableUsers: getManageableUsers(),
+      roomPermissions: getRoomPermissionState(),
+      type: 'room_permissions_state',
+    })
+  }
+
   if (previousRoomId !== '' && previousRoomId !== roomId) {
     broadcastPresence(previousRoomId)
   }
@@ -2087,6 +2204,102 @@ function handleCreateRoom(state, socket, payload) {
     roomId,
     sessionId: state.sessionId,
   })
+  broadcastRoomPermissionStateToAdmins()
+}
+
+function revokeRoomAccessForUsers(roomId, removedUserIds) {
+  if (removedUserIds.size === 0) {
+    return
+  }
+
+  const roomName = statementSelectRoom.get(roomId)?.name ?? '当前房间'
+
+  for (const connection of sessionConnections.values()) {
+    if (connection.roomId !== roomId || !removedUserIds.has(connection.userId)) {
+      continue
+    }
+
+    sendJson(connection.socket, {
+      message: `你已失去对「${roomName}」的访问权限，连接将自动刷新到可进入的房间。`,
+      type: 'error',
+    })
+    connection.socket.close(4003, 'Room access revoked')
+  }
+}
+
+function handleUpdateRoomPermissions(state, socket, payload) {
+  if (!state.joined || state.userId === '') {
+    sendJson(socket, {
+      message: '请先进入聊天室，再修改房间权限。',
+      type: 'error',
+    })
+    return
+  }
+
+  if (!isAdminUser(state.userId)) {
+    sendJson(socket, {
+      message: '只有管理员可以修改房间权限。',
+      type: 'error',
+    })
+    return
+  }
+
+  const roomId = String(payload.roomId ?? '').trim()
+
+  if (roomId === '') {
+    sendJson(socket, {
+      message: '目标房间不存在。',
+      type: 'error',
+    })
+    return
+  }
+
+  const room = statementSelectRoom.get(roomId)
+
+  if (!room) {
+    sendJson(socket, {
+      message: '目标房间不存在。',
+      type: 'error',
+    })
+    return
+  }
+
+  const manageableUsers = getManageableUsers()
+  const manageableUserIds = new Set(manageableUsers.map((user) => user.id))
+  const nextAllowedUserIds = new Set(
+    Array.isArray(payload.userIds)
+      ? payload.userIds
+        .map((value) => String(value ?? '').trim())
+        .filter((value) => manageableUserIds.has(value))
+      : [],
+  )
+  const existingMemberships = statementSelectRoomMembershipsForRoom.all(roomId)
+  const existingUserIds = new Set(existingMemberships.map((entry) => entry.userId))
+  const removedUserIds = new Set()
+
+  for (const membership of existingMemberships) {
+    if (nextAllowedUserIds.has(membership.userId)) {
+      continue
+    }
+
+    statementDeleteRoomMembership.run({
+      roomId,
+      userId: membership.userId,
+    })
+    removedUserIds.add(membership.userId)
+  }
+
+  for (const userId of nextAllowedUserIds) {
+    if (existingUserIds.has(userId)) {
+      continue
+    }
+
+    ensureRoomMembership(roomId, userId, 'member')
+  }
+
+  revokeRoomAccessForUsers(roomId, removedUserIds)
+  broadcastRooms()
+  broadcastRoomPermissionStateToAdmins()
 }
 
 function sendCharacterState(socket, sessionId, userId) {
@@ -2236,6 +2449,7 @@ function handleDiceCommand(state, socket, body) {
     nickname: state.nickname,
     roomId: state.roomId,
     sessionId: state.sessionId,
+    userId: state.userId,
     ...speakerSnapshot,
   })
 
@@ -2278,6 +2492,7 @@ function handleChatMessage(state, socket, payload) {
     nickname: state.nickname,
     roomId: state.roomId,
     sessionId: state.sessionId,
+    userId: state.userId,
     ...speakerSnapshot,
   })
 
@@ -2570,6 +2785,11 @@ websocketServer.on('connection', (socket, request) => {
 
     if (payload.type === 'create_room') {
       handleCreateRoom(state, socket, payload)
+      return
+    }
+
+    if (payload.type === 'update_room_permissions') {
+      handleUpdateRoomPermissions(state, socket, payload)
       return
     }
 

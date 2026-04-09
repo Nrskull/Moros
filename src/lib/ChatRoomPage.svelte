@@ -67,6 +67,17 @@
     type: 'character_state'
   }
 
+  interface ChatRoomPermission {
+    roomId: string
+    userIds: string[]
+  }
+
+  interface ChatRoomPermissionsStatePayload {
+    manageableUsers: ChatUser[]
+    roomPermissions: ChatRoomPermission[]
+    type: 'room_permissions_state'
+  }
+
   interface ChatSystemRenderItem {
     body: string
     createdAt: number
@@ -99,6 +110,7 @@
     | ChatJoinedPayload
     | ChatMessagePayload
     | ChatPresencePayload
+    | ChatRoomPermissionsStatePayload
     | ChatRoomsPayload
 
   type ChatRenderItem = ChatMessageRenderGroup | ChatNarrationRenderItem | ChatSystemRenderItem
@@ -132,6 +144,9 @@
     { key: 'willpower', label: '意志' },
   ]
 
+  const AVATAR_CROP_VIEWPORT_SIZE = 220
+  const AVATAR_CROP_OUTPUT_SIZE = 320
+
   let characterMenuElement: HTMLDivElement | null = null
   let messageViewportElement: HTMLDivElement | null = null
 
@@ -156,11 +171,17 @@
   let activeCharacterId: string | null = null
   let messages: ChatMessage[] = []
   let members: ChatMember[] = []
+  let manageableUsers: ChatUser[] = []
+  let roomPermissions: ChatRoomPermission[] = []
   let unreadIncomingCount = 0
   let isAuthPromptOpen = false
   let isCreateRoomPromptOpen = false
   let createRoomDraft = ''
   let createRoomError = ''
+  let isRoomPermissionsPromptOpen = false
+  let roomPermissionsRoomId = ''
+  let roomPermissionsDraftUserIds: string[] = []
+  let roomPermissionsError = ''
   let isCreateCharacterPromptOpen = false
   let createCharacterNameDraft = ''
   let createCharacterError = ''
@@ -175,6 +196,21 @@
   let editCharacterAvatarInputElement: HTMLInputElement | null = null
   let editCharacterAvatarDataUrl = ''
   let isCharacterMenuOpen = false
+  let closeCharacterEditorOnNextState = false
+  let isAvatarCropPromptOpen = false
+  let avatarCropTarget: 'create' | 'edit' = 'create'
+  let avatarCropSourceDataUrl = ''
+  let avatarCropNaturalWidth = 0
+  let avatarCropNaturalHeight = 0
+  let avatarCropZoom = 1
+  let avatarCropOffsetX = 0
+  let avatarCropOffsetY = 0
+  let avatarCropError = ''
+  let avatarCropPointerId: number | null = null
+  let avatarCropPointerOriginX = 0
+  let avatarCropPointerOriginY = 0
+  let avatarCropOriginOffsetX = 0
+  let avatarCropOriginOffsetY = 0
   let roomList: ChatRoom[] = [ROOM_PLACEHOLDER]
   let activeCharacter: ChatCharacterCard | null = null
   let renderedMessages: ChatRenderItem[] = []
@@ -234,8 +270,324 @@
     }
   }
 
+  function isAdminCurrentUser(): boolean {
+    return currentUser?.role === 'admin'
+  }
+
+  function getAllowedUserIdsForRoom(roomId: string, entries: ChatRoomPermission[] = roomPermissions): string[] {
+    return entries.find((entry) => entry.roomId === roomId)?.userIds ?? []
+  }
+
+  function openRoomPermissionsPrompt(roomEntry: ChatRoom, event?: MouseEvent): void {
+    event?.stopPropagation()
+
+    if (!isAdminCurrentUser()) {
+      return
+    }
+
+    roomPermissionsRoomId = roomEntry.id
+    roomPermissionsDraftUserIds = [...getAllowedUserIdsForRoom(roomEntry.id)]
+    roomPermissionsError = ''
+    isRoomPermissionsPromptOpen = true
+  }
+
+  function closeRoomPermissionsPrompt(): void {
+    isRoomPermissionsPromptOpen = false
+    roomPermissionsRoomId = ''
+    roomPermissionsDraftUserIds = []
+    roomPermissionsError = ''
+  }
+
+  function handleRoomPermissionsToggle(userId: string, event: Event): void {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+
+    if (target.checked) {
+      if (!roomPermissionsDraftUserIds.includes(userId)) {
+        roomPermissionsDraftUserIds = [...roomPermissionsDraftUserIds, userId]
+      }
+      return
+    }
+
+    roomPermissionsDraftUserIds = roomPermissionsDraftUserIds.filter((entry) => entry !== userId)
+  }
+
+  function handleRoomPermissionsSubmit(event: SubmitEvent): void {
+    event.preventDefault()
+    submitRoomPermissions()
+  }
+
+  function submitRoomPermissions(): void {
+    if (roomPermissionsRoomId === '') {
+      roomPermissionsError = '目标房间不存在。'
+      return
+    }
+
+    if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
+      roomPermissionsError = '当前未连接聊天室，无法更新房间权限。'
+      return
+    }
+
+    roomPermissionsError = ''
+
+    socket.send(
+      JSON.stringify({
+        roomId: roomPermissionsRoomId,
+        type: 'update_room_permissions',
+        userIds: roomPermissionsDraftUserIds,
+      }),
+    )
+  }
+
+  function closeCharacterSheet(): void {
+    isCreateCharacterPromptOpen = false
+    isEditCharacterPromptOpen = false
+    closeCharacterEditorOnNextState = false
+    createCharacterError = ''
+    editCharacterError = ''
+    clearCreateCharacterAvatar()
+    clearEditCharacterAvatar()
+  }
+
+  function getCharacterSheetHeading(): string {
+    return isCreateCharacterPromptOpen ? '创建角色卡' : '编辑角色卡'
+  }
+
+  function getCharacterSheetDescription(): string {
+    if (isCreateCharacterPromptOpen) {
+      return '保存后会自动切换到新角色，你可以立刻回到聊天室继续发言和检定。'
+    }
+
+    return '这里负责编辑角色名、头像和九项属性。保存后，新发出的消息会使用新的角色快照。'
+  }
+
+  function getActiveCharacterDraftName(): string {
+    return isCreateCharacterPromptOpen ? createCharacterNameDraft : editCharacterNameDraft
+  }
+
+  function getActiveCharacterAvatarDataUrl(): string {
+    return isCreateCharacterPromptOpen ? createCharacterAvatarDataUrl : editCharacterAvatarDataUrl
+  }
+
+  function getActiveCharacterAttributesDraft(): ChatCharacterAttributes {
+    return isCreateCharacterPromptOpen ? createCharacterAttributesDraft : editCharacterAttributesDraft
+  }
+
+  function getAvatarCropBaseScale(): number {
+    if (avatarCropNaturalWidth <= 0 || avatarCropNaturalHeight <= 0) {
+      return 1
+    }
+
+    return Math.max(
+      AVATAR_CROP_VIEWPORT_SIZE / avatarCropNaturalWidth,
+      AVATAR_CROP_VIEWPORT_SIZE / avatarCropNaturalHeight,
+    )
+  }
+
+  function getAvatarCropDisplayMetrics(zoom = avatarCropZoom): {
+    height: number
+    width: number
+  } {
+    const scale = getAvatarCropBaseScale() * zoom
+
+    return {
+      height: avatarCropNaturalHeight * scale,
+      width: avatarCropNaturalWidth * scale,
+    }
+  }
+
+  function clampAvatarCropOffsets(offsetX: number, offsetY: number, zoom = avatarCropZoom): {
+    x: number
+    y: number
+  } {
+    const { width, height } = getAvatarCropDisplayMetrics(zoom)
+    const limitX = Math.max(0, (width - AVATAR_CROP_VIEWPORT_SIZE) / 2)
+    const limitY = Math.max(0, (height - AVATAR_CROP_VIEWPORT_SIZE) / 2)
+
+    return {
+      x: Math.min(limitX, Math.max(-limitX, offsetX)),
+      y: Math.min(limitY, Math.max(-limitY, offsetY)),
+    }
+  }
+
+  function setAvatarCropOffsets(offsetX: number, offsetY: number, zoom = avatarCropZoom): void {
+    const nextOffsets = clampAvatarCropOffsets(offsetX, offsetY, zoom)
+    avatarCropOffsetX = nextOffsets.x
+    avatarCropOffsetY = nextOffsets.y
+  }
+
+  function getAvatarCropImageStyle(): string {
+    const { width, height } = getAvatarCropDisplayMetrics()
+
+    return [
+      `width: ${width}px`,
+      `height: ${height}px`,
+      `transform: translate(calc(-50% + ${avatarCropOffsetX}px), calc(-50% + ${avatarCropOffsetY}px))`,
+    ].join('; ')
+  }
+
+  function resetAvatarCropState(): void {
+    avatarCropSourceDataUrl = ''
+    avatarCropNaturalWidth = 0
+    avatarCropNaturalHeight = 0
+    avatarCropZoom = 1
+    avatarCropOffsetX = 0
+    avatarCropOffsetY = 0
+    avatarCropError = ''
+    avatarCropPointerId = null
+  }
+
+  function closeAvatarCropPrompt(): void {
+    isAvatarCropPromptOpen = false
+    resetAvatarCropState()
+  }
+
+  function loadImageMetadata(dataUrl: string): Promise<{ height: number; width: number }> {
+    return new Promise((resolve, reject) => {
+      const image = new Image()
+
+      image.addEventListener('load', () => {
+        resolve({
+          height: image.naturalHeight,
+          width: image.naturalWidth,
+        })
+      })
+
+      image.addEventListener('error', () => {
+        reject(new Error('IMAGE_LOAD_FAILED'))
+      })
+
+      image.src = dataUrl
+    })
+  }
+
+  async function openAvatarCropPrompt(target: 'create' | 'edit', dataUrl: string): Promise<void> {
+    const imageMetadata = await loadImageMetadata(dataUrl)
+
+    avatarCropTarget = target
+    avatarCropSourceDataUrl = dataUrl
+    avatarCropNaturalWidth = imageMetadata.width
+    avatarCropNaturalHeight = imageMetadata.height
+    avatarCropZoom = 1
+    avatarCropOffsetX = 0
+    avatarCropOffsetY = 0
+    avatarCropError = ''
+    avatarCropPointerId = null
+    isAvatarCropPromptOpen = true
+  }
+
+  function handleAvatarCropZoomInput(event: Event): void {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+
+    const nextZoom = Number.parseFloat(target.value)
+    avatarCropZoom = Number.isFinite(nextZoom) ? nextZoom : 1
+    setAvatarCropOffsets(avatarCropOffsetX, avatarCropOffsetY)
+  }
+
+  function handleAvatarCropPointerDown(event: PointerEvent): void {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLElement)) {
+      return
+    }
+
+    avatarCropPointerId = event.pointerId
+    avatarCropPointerOriginX = event.clientX
+    avatarCropPointerOriginY = event.clientY
+    avatarCropOriginOffsetX = avatarCropOffsetX
+    avatarCropOriginOffsetY = avatarCropOffsetY
+    target.setPointerCapture(event.pointerId)
+  }
+
+  function handleAvatarCropPointerMove(event: PointerEvent): void {
+    if (avatarCropPointerId !== event.pointerId) {
+      return
+    }
+
+    setAvatarCropOffsets(
+      avatarCropOriginOffsetX + event.clientX - avatarCropPointerOriginX,
+      avatarCropOriginOffsetY + event.clientY - avatarCropPointerOriginY,
+    )
+  }
+
+  function handleAvatarCropPointerUp(event: PointerEvent): void {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLElement) || avatarCropPointerId !== event.pointerId) {
+      return
+    }
+
+    target.releasePointerCapture(event.pointerId)
+    avatarCropPointerId = null
+  }
+
+  async function renderCroppedAvatarDataUrl(): Promise<string> {
+    const image = new Image()
+
+    await new Promise<void>((resolve, reject) => {
+      image.addEventListener('load', () => resolve())
+      image.addEventListener('error', () => reject(new Error('IMAGE_LOAD_FAILED')))
+      image.src = avatarCropSourceDataUrl
+    })
+
+    const canvas = document.createElement('canvas')
+    canvas.width = AVATAR_CROP_OUTPUT_SIZE
+    canvas.height = AVATAR_CROP_OUTPUT_SIZE
+
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      throw new Error('CANVAS_CONTEXT_UNAVAILABLE')
+    }
+
+    const scaleRatio = AVATAR_CROP_OUTPUT_SIZE / AVATAR_CROP_VIEWPORT_SIZE
+    const { width, height } = getAvatarCropDisplayMetrics()
+    const drawWidth = width * scaleRatio
+    const drawHeight = height * scaleRatio
+    const drawX = AVATAR_CROP_OUTPUT_SIZE / 2 - drawWidth / 2 + avatarCropOffsetX * scaleRatio
+    const drawY = AVATAR_CROP_OUTPUT_SIZE / 2 - drawHeight / 2 + avatarCropOffsetY * scaleRatio
+
+    context.clearRect(0, 0, canvas.width, canvas.height)
+    context.drawImage(image, drawX, drawY, drawWidth, drawHeight)
+
+    return canvas.toDataURL('image/png')
+  }
+
+  async function confirmAvatarCrop(): Promise<void> {
+    try {
+      const nextAvatarDataUrl = await renderCroppedAvatarDataUrl()
+
+      if (avatarCropTarget === 'create') {
+        createCharacterAvatarDataUrl = nextAvatarDataUrl
+        createCharacterError = ''
+      } else {
+        editCharacterAvatarDataUrl = nextAvatarDataUrl
+        editCharacterError = ''
+      }
+
+      closeAvatarCropPrompt()
+    } catch {
+      avatarCropError = '头像裁切失败，请重新上传后再试。'
+    }
+  }
+
   function isOwnMessage(message: ChatMessage): boolean {
-    return message.kind !== 'system' && message.sessionId === sessionId
+    if (message.kind === 'system') {
+      return false
+    }
+
+    if (currentUser?.id && message.userId) {
+      return message.userId === currentUser.id
+    }
+
+    return message.sessionId === sessionId
   }
 
   function getMessageSpeakerName(message: ChatMessage): string {
@@ -304,7 +656,7 @@
       return null
     }
 
-    return `${message.sessionId ?? 'anonymous'}::${message.speakerCharacterId ?? ''}::${getMessageSpeakerName(message)}::${getMessageSpeakerAvatar(message)}`
+    return `${message.userId ?? message.sessionId ?? 'anonymous'}::${message.speakerCharacterId ?? ''}::${getMessageSpeakerName(message)}::${getMessageSpeakerAvatar(message)}`
   }
 
   function buildRenderedMessages(input: ChatMessage[]): ChatRenderItem[] {
@@ -541,6 +893,21 @@
     }
   }
 
+  function handleCharacterNameInput(event: Event): void {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+
+    if (isCreateCharacterPromptOpen) {
+      createCharacterNameDraft = target.value
+      return
+    }
+
+    editCharacterNameDraft = target.value
+  }
+
   function clearCreateCharacterAvatar(): void {
     createCharacterAvatarDataUrl = ''
 
@@ -607,7 +974,8 @@
     }
 
     try {
-      createCharacterAvatarDataUrl = await readAvatarFileAsDataUrl(file)
+      const avatarDataUrl = await readAvatarFileAsDataUrl(file)
+      await openAvatarCropPrompt('create', avatarDataUrl)
       createCharacterError = ''
     } catch {
       createCharacterError = '头像读取失败，请换一张图片后重试。'
@@ -635,7 +1003,8 @@
     }
 
     try {
-      editCharacterAvatarDataUrl = await readAvatarFileAsDataUrl(file)
+      const avatarDataUrl = await readAvatarFileAsDataUrl(file)
+      await openAvatarCropPrompt('edit', avatarDataUrl)
       editCharacterError = ''
     } catch {
       editCharacterError = '头像读取失败，请换一张图片后重试。'
@@ -668,6 +1037,8 @@
 
       if (!payload.ok || payload.authenticated !== true || !payload.currentUser) {
         currentUser = null
+        manageableUsers = []
+        roomPermissions = []
         return false
       }
 
@@ -677,6 +1048,8 @@
     } catch {
       authError = '身份校验失败，请确认聊天服务已启动。'
       currentUser = null
+      manageableUsers = []
+      roomPermissions = []
       return false
     } finally {
       isAuthChecking = false
@@ -710,6 +1083,8 @@
 
       currentUser = payload.currentUser
       nickname = resolveChatNicknameFromUser(payload.currentUser)
+      manageableUsers = []
+      roomPermissions = []
       accessKeyDraft = ''
       authError = ''
       isAuthPromptOpen = false
@@ -754,6 +1129,8 @@
       shouldReconnect = false
       currentUser = null
       nickname = ''
+      manageableUsers = []
+      roomPermissions = []
       connectionState = 'disconnected'
       connectionError = payload.message
       isAuthPromptOpen = true
@@ -773,9 +1150,8 @@
       createRoomError = ''
       createCharacterError = ''
       editCharacterError = ''
+      roomPermissionsError = ''
       isCreateRoomPromptOpen = false
-      isCreateCharacterPromptOpen = false
-      isEditCharacterPromptOpen = false
       clearCreateCharacterAvatar()
       clearEditCharacterAvatar()
       isCharacterMenuOpen = false
@@ -791,12 +1167,12 @@
 
     if (payload.type === 'character_state') {
       applyCharacterState(payload)
+      if (closeCharacterEditorOnNextState) {
+        closeCharacterEditorOnNextState = false
+        closeCharacterSheet()
+      }
       createCharacterError = ''
       editCharacterError = ''
-      isCreateCharacterPromptOpen = false
-      isEditCharacterPromptOpen = false
-      clearCreateCharacterAvatar()
-      clearEditCharacterAvatar()
       isCharacterMenuOpen = false
       return
     }
@@ -829,6 +1205,18 @@
       return
     }
 
+    if (payload.type === 'room_permissions_state') {
+      manageableUsers = payload.manageableUsers
+      roomPermissions = payload.roomPermissions
+
+      if (isRoomPermissionsPromptOpen && roomPermissionsRoomId !== '') {
+        roomPermissionsDraftUserIds = [...getAllowedUserIdsForRoom(roomPermissionsRoomId, payload.roomPermissions)]
+        roomPermissionsError = ''
+      }
+
+      return
+    }
+
     if (isCreateRoomPromptOpen) {
       if (socket?.readyState === WebSocket.OPEN && room.id !== '') {
         connectionState = 'connected'
@@ -842,6 +1230,7 @@
         connectionState = 'connected'
       }
       createCharacterError = payload.message
+      closeCharacterEditorOnNextState = false
       return
     }
 
@@ -850,6 +1239,15 @@
         connectionState = 'connected'
       }
       editCharacterError = payload.message
+      closeCharacterEditorOnNextState = false
+      return
+    }
+
+    if (isRoomPermissionsPromptOpen) {
+      if (socket?.readyState === WebSocket.OPEN && room.id !== '') {
+        connectionState = 'connected'
+      }
+      roomPermissionsError = payload.message
       return
     }
 
@@ -952,6 +1350,7 @@
   function openCreateCharacterPrompt(): void {
     isCharacterMenuOpen = false
     isEditCharacterPromptOpen = false
+    closeCharacterEditorOnNextState = false
     clearCreateCharacterAvatar()
     createCharacterNameDraft = ''
     createCharacterAttributesDraft = createEmptyCharacterAttributes()
@@ -962,6 +1361,7 @@
   function openEditCharacterPrompt(character: ChatCharacterCard): void {
     isCharacterMenuOpen = false
     isCreateCharacterPromptOpen = false
+    closeCharacterEditorOnNextState = false
     clearEditCharacterAvatar()
     editCharacterId = character.id
     editCharacterNameDraft = character.name
@@ -972,13 +1372,11 @@
   }
 
   function closeCreateCharacterPrompt(): void {
-    isCreateCharacterPromptOpen = false
-    clearCreateCharacterAvatar()
+    closeCharacterSheet()
   }
 
   function closeEditCharacterPrompt(): void {
-    isEditCharacterPromptOpen = false
-    clearEditCharacterAvatar()
+    closeCharacterSheet()
   }
 
   function toggleCharacterMenu(): void {
@@ -1139,6 +1537,7 @@
     }
 
     createCharacterError = ''
+    closeCharacterEditorOnNextState = true
 
     socket.send(
       JSON.stringify({
@@ -1169,6 +1568,7 @@
     }
 
     editCharacterError = ''
+    closeCharacterEditorOnNextState = true
 
     socket.send(
       JSON.stringify({
@@ -1307,189 +1707,314 @@
 
         <div class="chat-room-list">
           {#each roomList as entry (entry.id)}
-            <button
+            <div
               class:is-active={entry.id === activeRoomId}
               class="chat-room-card"
-              type="button"
-              onclick={() => switchRoom(entry.id)}
             >
-              <div class="chat-room-card-meta">
-                <strong>{entry.name}</strong>
-                <span>{entry.memberCount} 人在线</span>
-              </div>
-              <span>
-                {entry.latestMessageAt === null
-                  ? '暂无消息'
-                  : `最近消息 ${formatChatTimestamp(entry.latestMessageAt)}`}
-              </span>
-              <p>
-                {entry.id === PUBLIC_CHAT_ROOM_ID
-                  ? '默认公共聊天室，拥有该房间权限的用户可见。'
-                  : '自建文本聊天室，仅已授权成员可进入并查看最近消息历史。'}
-              </p>
-            </button>
+              {#if isAdminCurrentUser()}
+                <button
+                  aria-label={`管理 ${entry.name} 的可见权限`}
+                  class="chat-room-card-action"
+                  type="button"
+                  onclick={(event) => openRoomPermissionsPrompt(entry, event)}
+                >
+                  权限
+                </button>
+              {/if}
+
+              <button class="chat-room-card-main" type="button" onclick={() => switchRoom(entry.id)}>
+                <div class="chat-room-card-meta">
+                  <strong>{entry.name}</strong>
+                  <span>{entry.memberCount} 人在线</span>
+                </div>
+                <span>
+                  {entry.latestMessageAt === null
+                    ? '暂无消息'
+                    : `最近消息 ${formatChatTimestamp(entry.latestMessageAt)}`}
+                </span>
+                <p>
+                  {entry.id === PUBLIC_CHAT_ROOM_ID
+                    ? '默认公共聊天室，拥有该房间权限的用户可见。'
+                    : '自建文本聊天室，仅已授权成员可进入并查看最近消息历史。'}
+                </p>
+              </button>
+            </div>
           {/each}
         </div>
       </aside>
 
       <section class="chat-panel chat-message-panel">
-        <div class="chat-message-head">
-          <div>
-            <span class="section-label">当前房间</span>
-            <strong>{room.name}</strong>
-          </div>
-          <span>{members.length} 人在线</span>
-        </div>
-
-        <div
-          bind:this={messageViewportElement}
-          class="chat-message-viewport"
-          onscroll={handleMessageViewportScroll}
-        >
-          {#if messages.length === 0}
-            <div class="chat-empty-state">
-              <strong>聊天室还没有消息。</strong>
-              <p>完成密钥验证后，系统会直接匹配你的账号、角色卡和可进入房间。</p>
+        {#if isCreateCharacterPromptOpen || isEditCharacterPromptOpen}
+          {@const activeCharacterDraft = getActiveCharacterAttributesDraft()}
+          <div class="chat-character-sheet-page">
+            <div class="chat-character-sheet-head">
+              <div>
+                <span class="section-label">角色子页</span>
+                <strong>{getCharacterSheetHeading()}</strong>
+                <p>{getCharacterSheetDescription()}</p>
+              </div>
+              <button class="toolbar-action" type="button" onclick={closeCharacterSheet}>
+                返回聊天室
+              </button>
             </div>
-          {:else}
-            <div class="chat-message-list">
-              {#each renderedMessages as item (item.id)}
-                {#if item.type === 'system'}
-                  <div class="chat-system-message">
-                    <span>{item.body}</span>
-                    <time datetime={new Date(item.createdAt).toISOString()}>
-                      {formatChatTimestamp(item.createdAt)}
-                    </time>
-                  </div>
-                {:else if item.type === 'narration'}
-                  <div class:has-ruling-tone={item.isRulingTone} class="chat-message-narration">
-                    <p use:autoIndentMessage class="chat-message-text">{item.body}</p>
-                  </div>
-                {:else}
-                  <article class:is-own={item.isOwn} class="chat-message-group">
-                    <div class="chat-message-avatar-slot">
-                      <div class="chat-message-avatar">
-                        {#if item.speakerAvatar !== ''}
-                          <img alt={`${item.speakerName} 头像`} src={item.speakerAvatar} />
-                        {:else}
-                          <span>{getSpeakerInitial(item.speakerName)}</span>
-                        {/if}
-                      </div>
-                    </div>
 
-                    <div class="chat-message-column">
-                      <div class="chat-message-meta">
-                        <strong>{item.speakerName}</strong>
-                        <time datetime={new Date(item.messages[0].createdAt).toISOString()}>
-                          {formatChatTimestamp(item.messages[0].createdAt)}
-                        </time>
-                      </div>
-
-                      <div class="chat-message-bubble-list">
-                        {#each item.messages as message (message.sequence)}
-                          <div class:chat-dice-bubble={message.kind === 'dice'} class="chat-message-bubble">
-                            {#if message.kind === 'dice'}
-                              <span class="chat-message-kind">检定结果</span>
-                            {/if}
-                            <p use:autoIndentMessage class="chat-message-text">{message.body}</p>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  </article>
-                {/if}
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        {#if unreadIncomingCount > 0}
-          <button class="chat-new-message-chip" type="button" onclick={() => scrollMessagesToBottom()}>
-            有 {unreadIncomingCount} 条新消息
-          </button>
-        {/if}
-
-        <form class="chat-composer" onsubmit={handleMessageSubmit}>
-          <div bind:this={characterMenuElement} class="chat-character-menu">
-            <button
-              aria-expanded={isCharacterMenuOpen}
-              class="chat-character-trigger"
-              disabled={connectionState !== 'connected'}
-              type="button"
-              onclick={toggleCharacterMenu}
+            <form
+              class="chat-character-sheet-form"
+              onsubmit={isCreateCharacterPromptOpen ? handleCreateCharacterSubmit : handleEditCharacterSubmit}
             >
-              <span>
-                {activeCharacter
-                  ? `当前角色：${activeCharacter.name}${isKpNarrationCharacter(activeCharacter) ? ' · KP旁白' : ''}`
-                  : '当前角色：未设置'}
-              </span>
-              <span aria-hidden="true">{isCharacterMenuOpen ? '▴' : '▾'}</span>
-            </button>
+              <label class="chat-nickname-field">
+                <span>角色名</span>
+                <input
+                  maxlength={CHAT_CHARACTER_NAME_MAX_LENGTH}
+                  oninput={handleCharacterNameInput}
+                  placeholder="例如：周明 / 林雾 / 宋澈"
+                  type="text"
+                  value={isCreateCharacterPromptOpen ? createCharacterNameDraft : editCharacterNameDraft}
+                />
+              </label>
 
-            {#if isCharacterMenuOpen}
-              <div class="chat-character-dropdown">
-                {#if characterCards.length === 0}
-                  <div class="chat-character-empty">当前还没有角色卡。</div>
-                {:else}
-                  {#each characterCards as character (character.id)}
-                    <div class="chat-character-option">
-                      <button
-                        class:is-active={character.id === activeCharacterId}
-                        class="chat-character-option-main"
-                        type="button"
-                        onclick={() => switchActiveCharacter(character.id)}
-                      >
-                        <strong>{character.name}</strong>
-                        <span>
-                          {character.id === activeCharacterId
-                            ? isKpNarrationCharacter(character)
-                              ? '当前使用 / KP旁白模式'
-                              : '当前使用'
-                            : isKpNarrationCharacter(character)
-                              ? '切换到 KP 旁白模式'
-                              : '切换到该角色'}
-                        </span>
-                      </button>
-
-                      <button
-                        aria-label={`编辑角色 ${character.name}`}
-                        class="chat-character-option-edit"
-                        type="button"
-                        onclick={() => openEditCharacterPrompt(character)}
-                      >
-                        ⚙
-                      </button>
-                    </div>
-                  {/each}
-                {/if}
-
-                <div class="chat-character-dropdown-footer">
-                  <button class="chat-character-create" type="button" onclick={openCreateCharacterPrompt}>
-                    + 新建角色卡
-                  </button>
+              <div class="chat-character-avatar-block">
+                <div>
+                  <span class="section-label">角色头像</span>
+                  <p>支持简单移动和裁切。保存后，后续发送的聊天消息会使用新的头像快照。</p>
                 </div>
+
+                <div class="chat-character-avatar-row">
+                  <button
+                    class="chat-character-avatar-picker"
+                    type="button"
+                    onclick={isCreateCharacterPromptOpen ? triggerCreateCharacterAvatarPicker : triggerEditCharacterAvatarPicker}
+                  >
+                    {#if getActiveCharacterAvatarDataUrl() !== ''}
+                      <img alt="角色头像预览" src={getActiveCharacterAvatarDataUrl()} />
+                    {:else}
+                      <div class="chat-character-avatar-placeholder">
+                        <strong>+</strong>
+                        <span>选择头像并裁切</span>
+                      </div>
+                    {/if}
+                  </button>
+
+                  <div class="chat-character-avatar-copy">
+                    <strong>{getActiveCharacterDraftName() === '' ? '先设置角色信息' : getActiveCharacterDraftName()}</strong>
+                    <span>头像裁切是客户端即时完成的。你可以拖动画面调整构图，再保存到角色卡。</span>
+                  </div>
+                </div>
+
+                {#if isCreateCharacterPromptOpen}
+                  <input
+                    bind:this={createCharacterAvatarInputElement}
+                    accept="image/*"
+                    class="chat-character-avatar-input"
+                    onchange={handleCreateCharacterAvatarChange}
+                    type="file"
+                  />
+                {:else}
+                  <input
+                    bind:this={editCharacterAvatarInputElement}
+                    accept="image/*"
+                    class="chat-character-avatar-input"
+                    onchange={handleEditCharacterAvatarChange}
+                    type="file"
+                  />
+                {/if}
+              </div>
+
+              <div class="chat-character-grid">
+                {#each ATTRIBUTE_FIELDS as field}
+                  <label class="chat-character-field">
+                    <span>{field.label}</span>
+                    <input
+                      max="100"
+                      min="0"
+                      oninput={(event) =>
+                        isCreateCharacterPromptOpen
+                          ? handleCharacterAttributeInput(field.key, event)
+                          : handleEditCharacterAttributeInput(field.key, event)}
+                      type="number"
+                      value={activeCharacterDraft[field.key]}
+                    />
+                  </label>
+                {/each}
+              </div>
+
+              {#if isCreateCharacterPromptOpen && createCharacterError !== ''}
+                <div class="chat-nickname-error">{createCharacterError}</div>
+              {/if}
+
+              {#if isEditCharacterPromptOpen && editCharacterError !== ''}
+                <div class="chat-nickname-error">{editCharacterError}</div>
+              {/if}
+
+              <div class="chat-character-sheet-actions">
+                <button class="toolbar-action" type="button" onclick={closeCharacterSheet}>
+                  取消
+                </button>
+                <button class="toolbar-action toolbar-primary" type="submit">
+                  {isCreateCharacterPromptOpen ? '创建角色卡' : '保存修改'}
+                </button>
+              </div>
+            </form>
+          </div>
+        {:else}
+          <div class="chat-message-head">
+            <div>
+              <span class="section-label">当前房间</span>
+              <strong>{room.name}</strong>
+            </div>
+            <span>{members.length} 人在线</span>
+          </div>
+
+          <div
+            bind:this={messageViewportElement}
+            class="chat-message-viewport"
+            onscroll={handleMessageViewportScroll}
+          >
+            {#if messages.length === 0}
+              <div class="chat-empty-state">
+                <strong>聊天室还没有消息。</strong>
+                <p>完成密钥验证后，系统会直接匹配你的账号、角色卡和可进入房间。</p>
+              </div>
+            {:else}
+              <div class="chat-message-list">
+                {#each renderedMessages as item (item.id)}
+                  {#if item.type === 'system'}
+                    <div class="chat-system-message">
+                      <span>{item.body}</span>
+                      <time datetime={new Date(item.createdAt).toISOString()}>
+                        {formatChatTimestamp(item.createdAt)}
+                      </time>
+                    </div>
+                  {:else if item.type === 'narration'}
+                    <div class:has-ruling-tone={item.isRulingTone} class="chat-message-narration">
+                      <p use:autoIndentMessage class="chat-message-text">{item.body}</p>
+                    </div>
+                  {:else}
+                    <article class:is-own={item.isOwn} class="chat-message-group">
+                      <div class="chat-message-avatar-slot">
+                        <div class="chat-message-avatar">
+                          {#if item.speakerAvatar !== ''}
+                            <img alt={`${item.speakerName} 头像`} src={item.speakerAvatar} />
+                          {:else}
+                            <span>{getSpeakerInitial(item.speakerName)}</span>
+                          {/if}
+                        </div>
+                      </div>
+
+                      <div class="chat-message-column">
+                        <div class="chat-message-meta">
+                          <strong>{item.speakerName}</strong>
+                          <time datetime={new Date(item.messages[0].createdAt).toISOString()}>
+                            {formatChatTimestamp(item.messages[0].createdAt)}
+                          </time>
+                        </div>
+
+                        <div class="chat-message-bubble-list">
+                          {#each item.messages as message (message.sequence)}
+                            <div class:chat-dice-bubble={message.kind === 'dice'} class="chat-message-bubble">
+                              {#if message.kind === 'dice'}
+                                <span class="chat-message-kind">检定结果</span>
+                              {/if}
+                              <p use:autoIndentMessage class="chat-message-text">{message.body}</p>
+                            </div>
+                          {/each}
+                        </div>
+                      </div>
+                    </article>
+                  {/if}
+                {/each}
               </div>
             {/if}
           </div>
 
-          <label class="chat-composer-field">
-            <span>输入消息</span>
-            <textarea
-              bind:value={draftMessage}
-              maxlength={CHAT_MAX_MESSAGE_LENGTH}
-              onkeydown={handleComposerKeydown}
-              placeholder="输入消息，回车发送，Shift + Enter 换行；或输入 .ra力量 进行属性检定"
-              rows="3"
-            ></textarea>
-          </label>
-
-          <div class="chat-composer-actions">
-            <span>{draftMessage.trim().length}/{CHAT_MAX_MESSAGE_LENGTH}</span>
-            <button class="toolbar-action toolbar-primary" disabled={!canSend} type="submit">
-              发送
+          {#if unreadIncomingCount > 0}
+            <button class="chat-new-message-chip" type="button" onclick={() => scrollMessagesToBottom()}>
+              有 {unreadIncomingCount} 条新消息
             </button>
-          </div>
-        </form>
+          {/if}
+
+          <form class="chat-composer" onsubmit={handleMessageSubmit}>
+            <div bind:this={characterMenuElement} class="chat-character-menu">
+              <button
+                aria-expanded={isCharacterMenuOpen}
+                class="chat-character-trigger"
+                disabled={connectionState !== 'connected'}
+                type="button"
+                onclick={toggleCharacterMenu}
+              >
+                <span>
+                  {activeCharacter
+                    ? `当前角色：${activeCharacter.name}${isKpNarrationCharacter(activeCharacter) ? ' · KP旁白' : ''}`
+                    : '当前角色：未设置'}
+                </span>
+                <span aria-hidden="true">{isCharacterMenuOpen ? '▴' : '▾'}</span>
+              </button>
+
+              {#if isCharacterMenuOpen}
+                <div class="chat-character-dropdown">
+                  {#if characterCards.length === 0}
+                    <div class="chat-character-empty">当前还没有角色卡。</div>
+                  {:else}
+                    {#each characterCards as character (character.id)}
+                      <div class="chat-character-option">
+                        <button
+                          class:is-active={character.id === activeCharacterId}
+                          class="chat-character-option-main"
+                          type="button"
+                          onclick={() => switchActiveCharacter(character.id)}
+                        >
+                          <strong>{character.name}</strong>
+                          <span>
+                            {character.id === activeCharacterId
+                              ? isKpNarrationCharacter(character)
+                                ? '当前使用 / KP旁白模式'
+                                : '当前使用'
+                              : isKpNarrationCharacter(character)
+                                ? '切换到 KP 旁白模式'
+                                : '切换到该角色'}
+                          </span>
+                        </button>
+
+                        <button
+                          aria-label={`编辑角色 ${character.name}`}
+                          class="chat-character-option-edit"
+                          type="button"
+                          onclick={() => openEditCharacterPrompt(character)}
+                        >
+                          ⚙
+                        </button>
+                      </div>
+                    {/each}
+                  {/if}
+
+                  <div class="chat-character-dropdown-footer">
+                    <button class="chat-character-create" type="button" onclick={openCreateCharacterPrompt}>
+                      + 新建角色卡
+                    </button>
+                  </div>
+                </div>
+              {/if}
+            </div>
+
+            <label class="chat-composer-field">
+              <span>输入消息</span>
+              <textarea
+                bind:value={draftMessage}
+                maxlength={CHAT_MAX_MESSAGE_LENGTH}
+                onkeydown={handleComposerKeydown}
+                placeholder="输入消息，回车发送，Shift + Enter 换行；或输入 .ra力量 进行属性检定"
+                rows="3"
+              ></textarea>
+            </label>
+
+            <div class="chat-composer-actions">
+              <span>{draftMessage.trim().length}/{CHAT_MAX_MESSAGE_LENGTH}</span>
+              <button class="toolbar-action toolbar-primary" disabled={!canSend} type="submit">
+                发送
+              </button>
+            </div>
+          </form>
+        {/if}
       </section>
 
       <aside class="chat-panel chat-member-panel">
@@ -1565,7 +2090,7 @@
         <div>
           <span class="section-label">新建房间</span>
           <h3>创建一个聊天室</h3>
-          <p>创建后会自动进入该房间，其他在线用户也会立刻在房间列表里看到它。</p>
+          <p>创建后会自动进入该房间；管理员可以继续为普通用户分配可见权限。</p>
         </div>
 
         <label class="chat-nickname-field">
@@ -1587,155 +2112,101 @@
     </div>
   {/if}
 
-  {#if isCreateCharacterPromptOpen}
+  {#if isRoomPermissionsPromptOpen}
+    {@const selectedRoom = roomList.find((entry) => entry.id === roomPermissionsRoomId) ?? null}
     <div class="chat-nickname-overlay">
-      <form class="chat-nickname-dialog chat-character-dialog" onsubmit={handleCreateCharacterSubmit}>
+      <form class="chat-nickname-dialog chat-room-permissions-dialog" onsubmit={handleRoomPermissionsSubmit}>
         <div>
-          <span class="section-label">新建角色卡</span>
-          <h3>创建 CoC 测试角色</h3>
-          <p>保存后会自动切换到这张角色卡，你可以立刻在当前房间测试 `.ra力量` 之类的检定。</p>
+          <span class="section-label">房间权限</span>
+          <h3>{selectedRoom ? `管理「${selectedRoom.name}」的可见用户` : '管理房间可见权限'}</h3>
+          <p>未被勾选的用户将直接看不到这个房间，也没有进入入口。</p>
         </div>
 
-        <label class="chat-nickname-field">
-          <span>角色名</span>
-          <input bind:value={createCharacterNameDraft} maxlength={CHAT_CHARACTER_NAME_MAX_LENGTH} placeholder="例如：小玛丽" type="text" />
-        </label>
-
-        <div class="chat-character-avatar-block">
-          <div>
-            <span class="section-label">角色头像</span>
-            <p>上传后会和角色卡一起保存，后续这张角色发送的消息会直接带上它。</p>
-          </div>
-
-          <div class="chat-character-avatar-row">
-            <button class="chat-character-avatar-picker" type="button" onclick={triggerCreateCharacterAvatarPicker}>
-              {#if createCharacterAvatarDataUrl !== ''}
-                <img alt="角色头像预览" src={createCharacterAvatarDataUrl} />
-              {:else}
-                <div class="chat-character-avatar-placeholder">
-                  <strong>+</strong>
-                  <span>点击上传头像</span>
+        <div class="chat-room-permissions-list">
+          {#if manageableUsers.length === 0}
+            <div class="chat-empty-inline">当前没有可分配的普通用户。</div>
+          {:else}
+            {#each manageableUsers as user (user.id)}
+              <label class="chat-room-permissions-user">
+                <div>
+                  <strong>{user.displayName}</strong>
+                  <span>{user.handle}</span>
                 </div>
-              {/if}
-            </button>
-
-            <div class="chat-character-avatar-copy">
-              <strong>创建时一并保存</strong>
-              <span>后续发送聊天消息和检定结果时，会使用当下角色的头像快照。</span>
-            </div>
-          </div>
-
-          <input
-            bind:this={createCharacterAvatarInputElement}
-            accept="image/*"
-            class="chat-character-avatar-input"
-            onchange={handleCreateCharacterAvatarChange}
-            type="file"
-          />
+                <input
+                  checked={roomPermissionsDraftUserIds.includes(user.id)}
+                  onchange={(event) => handleRoomPermissionsToggle(user.id, event)}
+                  type="checkbox"
+                />
+              </label>
+            {/each}
+          {/if}
         </div>
 
-        <div class="chat-character-grid">
-          {#each ATTRIBUTE_FIELDS as field}
-            <label class="chat-character-field">
-              <span>{field.label}</span>
-              <input
-                max="100"
-                min="0"
-                oninput={(event) => handleCharacterAttributeInput(field.key, event)}
-                type="number"
-                value={createCharacterAttributesDraft[field.key]}
-              />
-            </label>
-          {/each}
-        </div>
-
-        {#if createCharacterError !== ''}
-          <div class="chat-nickname-error">{createCharacterError}</div>
+        {#if roomPermissionsError !== ''}
+          <div class="chat-nickname-error">{roomPermissionsError}</div>
         {/if}
 
         <div class="chat-nickname-actions">
-          <button class="toolbar-action" type="button" onclick={closeCreateCharacterPrompt}>
-            取消
+          <button class="toolbar-action" type="button" onclick={closeRoomPermissionsPrompt}>
+            关闭
           </button>
-          <button class="toolbar-action toolbar-primary" type="submit">创建角色卡</button>
+          <button class="toolbar-action toolbar-primary" type="submit">
+            保存权限
+          </button>
         </div>
       </form>
     </div>
   {/if}
 
-  {#if isEditCharacterPromptOpen}
+  {#if isAvatarCropPromptOpen}
     <div class="chat-nickname-overlay">
-      <form class="chat-nickname-dialog chat-character-dialog" onsubmit={handleEditCharacterSubmit}>
+      <div class="chat-nickname-dialog chat-avatar-crop-dialog">
         <div>
-          <span class="section-label">编辑角色卡</span>
-          <h3>修改角色属性</h3>
-          <p>这里才展开属性编辑。主界面只保留角色切换入口，不再常驻展示九项属性。</p>
+          <span class="section-label">头像裁切</span>
+          <h3>调整头像位置</h3>
+          <p>拖动画面决定取景，滑块用于微调放大倍率。</p>
         </div>
 
-        <label class="chat-nickname-field">
-          <span>角色名</span>
-          <input bind:value={editCharacterNameDraft} maxlength={CHAT_CHARACTER_NAME_MAX_LENGTH} placeholder="例如：周明 / 林雾 / 宋澈" type="text" />
+        <div
+          aria-label="头像裁切画布"
+          class="chat-avatar-crop-surface"
+          onpointercancel={handleAvatarCropPointerUp}
+          onpointerdown={handleAvatarCropPointerDown}
+          onpointermove={handleAvatarCropPointerMove}
+          onpointerup={handleAvatarCropPointerUp}
+          role="application"
+        >
+          {#if avatarCropSourceDataUrl !== ''}
+            <img alt="待裁切头像" src={avatarCropSourceDataUrl} style={getAvatarCropImageStyle()} />
+          {/if}
+          <div class="chat-avatar-crop-frame" aria-hidden="true"></div>
+        </div>
+
+        <label class="chat-avatar-crop-zoom">
+          <span>缩放</span>
+          <input
+            max="2.8"
+            min="1"
+            oninput={handleAvatarCropZoomInput}
+            step="0.01"
+            type="range"
+            value={avatarCropZoom}
+          />
         </label>
 
-        <div class="chat-character-avatar-block">
-          <div>
-            <span class="section-label">角色头像</span>
-            <p>这里修改的是角色卡本身；新发出的消息会带上新的角色快照，历史消息不会被回改。</p>
-          </div>
-
-          <div class="chat-character-avatar-row">
-            <button class="chat-character-avatar-picker" type="button" onclick={triggerEditCharacterAvatarPicker}>
-              {#if editCharacterAvatarDataUrl !== ''}
-                <img alt="角色头像预览" src={editCharacterAvatarDataUrl} />
-              {:else}
-                <div class="chat-character-avatar-placeholder">
-                  <strong>+</strong>
-                  <span>点击上传头像</span>
-                </div>
-              {/if}
-            </button>
-
-            <div class="chat-character-avatar-copy">
-              <strong>持久化角色头像</strong>
-              <span>保存后，这张角色卡后续在聊天中的发言会显示新的头像；旧消息仍保留旧快照。</span>
-            </div>
-          </div>
-
-          <input
-            bind:this={editCharacterAvatarInputElement}
-            accept="image/*"
-            class="chat-character-avatar-input"
-            onchange={handleEditCharacterAvatarChange}
-            type="file"
-          />
-        </div>
-
-        <div class="chat-character-grid">
-          {#each ATTRIBUTE_FIELDS as field}
-            <label class="chat-character-field">
-              <span>{field.label}</span>
-              <input
-                max="100"
-                min="0"
-                oninput={(event) => handleEditCharacterAttributeInput(field.key, event)}
-                type="number"
-                value={editCharacterAttributesDraft[field.key]}
-              />
-            </label>
-          {/each}
-        </div>
-
-        {#if editCharacterError !== ''}
-          <div class="chat-nickname-error">{editCharacterError}</div>
+        {#if avatarCropError !== ''}
+          <div class="chat-nickname-error">{avatarCropError}</div>
         {/if}
 
         <div class="chat-nickname-actions">
-          <button class="toolbar-action" type="button" onclick={closeEditCharacterPrompt}>
+          <button class="toolbar-action" type="button" onclick={closeAvatarCropPrompt}>
             取消
           </button>
-          <button class="toolbar-action toolbar-primary" type="submit">保存修改</button>
+          <button class="toolbar-action toolbar-primary" type="button" onclick={() => void confirmAvatarCrop()}>
+            应用裁切
+          </button>
         </div>
-      </form>
+      </div>
     </div>
   {/if}
 </section>
