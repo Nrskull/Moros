@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:lan": "vite --host 0.0.0.0",
+    "deploy": "npm run build && rsync -avz --delete ./dist/ /opt/1panel/apps/openresty/openresty/www/sites/101.132.36.124/index/ && chown -R 1000:1000 /opt/1panel/apps/openresty/openresty/www/sites/101.132.36.124/index",
     "chat": "node server/chat-server.js",
     "chat:lan": "CHAT_HOST=0.0.0.0 node server/chat-server.js",
     "lan": "concurrently -k -n chat,web \"npm:chat:lan\" \"npm:dev:lan\"",

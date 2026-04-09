@@ -24,6 +24,7 @@ const ADMIN_USER = {
 }
 const SEEDED_CHAT_USERS = [
   {
+    accessKey: 'morosonder-edie-c568b5d51b9f3515',
     displayName: 'edie',
     handle: 'edie',
     id: 'user_edie',
@@ -31,6 +32,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
+    accessKey: 'morosonder-lateraven-30e39a38eea01c3e',
     displayName: 'lateraven',
     handle: 'lateraven',
     id: 'user_lateraven',
@@ -38,6 +40,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
+    accessKey: 'morosonder-sakin-a31b6e26d65fa0fb',
     displayName: 'sakin',
     handle: 'sakin',
     id: 'user_sakin',
@@ -45,6 +48,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
+    accessKey: 'morosonder-chen-52afeb1990910cd0',
     displayName: 'chen',
     handle: 'chen',
     id: 'user_chen',
@@ -52,6 +56,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
+    accessKey: 'morosonder-eshis-e0ebb010aa058e5f',
     displayName: 'eshis',
     handle: 'eshis',
     id: 'user_eshis',
@@ -59,6 +64,7 @@ const SEEDED_CHAT_USERS = [
     status: 'active',
   },
   {
+    accessKey: 'morosonder-lotka-628ba14547c2b0e3',
     displayName: 'Lotka',
     handle: 'lotka',
     id: 'user_lotka',
@@ -309,6 +315,17 @@ const statementSelectAccessKeyByHash = database.prepare(`
   LIMIT 1
 `)
 
+const statementSelectAccessKeyForUserByHash = database.prepare(`
+  SELECT
+    id,
+    expires_at AS expiresAt,
+    revoked_at AS revokedAt
+  FROM access_keys
+  WHERE user_id = ?
+    AND key_hash = ?
+  LIMIT 1
+`)
+
 const statementInsertAccessKey = database.prepare(`
   INSERT INTO access_keys (
     id,
@@ -332,10 +349,27 @@ const statementInsertAccessKey = database.prepare(`
   )
 `)
 
+const statementActivateAccessKey = database.prepare(`
+  UPDATE access_keys
+  SET
+    label = @label,
+    expires_at = NULL,
+    revoked_at = NULL
+  WHERE id = @id
+`)
+
 const statementUpdateAccessKeyLastUsedAt = database.prepare(`
   UPDATE access_keys
   SET last_used_at = @lastUsedAt
   WHERE id = @id
+`)
+
+const statementRevokeOtherAccessKeysForUser = database.prepare(`
+  UPDATE access_keys
+  SET revoked_at = @revokedAt
+  WHERE user_id = @userId
+    AND key_hash != @keyHash
+    AND revoked_at IS NULL
 `)
 
 const statementSelectRoom = database.prepare(`
@@ -783,10 +817,6 @@ function createAdminAccessKeyValue() {
   return `timeline-admin-${crypto.randomBytes(12).toString('hex')}`
 }
 
-function createSeededUserAccessKeyValue(handle) {
-  return `morosonder-${handle}-${crypto.randomBytes(8).toString('hex')}`
-}
-
 function hashSecret(value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
@@ -1064,6 +1094,52 @@ function ensureAccessKeyForUser(userId, accessKeyValue, label) {
   return keyId
 }
 
+function ensureFixedAccessKeyForUser(userId, accessKeyValue, label) {
+  const safeAccessKey = sanitiseAccessKey(accessKeyValue)
+
+  if (safeAccessKey === '') {
+    return null
+  }
+
+  const keyHash = hashSecret(safeAccessKey)
+  const existingByHash = statementSelectAccessKeyByHash.get(keyHash)
+
+  if (existingByHash && existingByHash.userId !== userId) {
+    throw new Error(`固定密钥冲突：${label} 已被其他账号占用。`)
+  }
+
+  const now = Date.now()
+  const existingForUser = statementSelectAccessKeyForUserByHash.get(userId, keyHash)
+  let accessKeyId = existingForUser?.id ?? null
+
+  if (accessKeyId) {
+    statementActivateAccessKey.run({
+      id: accessKeyId,
+      label,
+    })
+  } else {
+    accessKeyId = createAccessKeyId()
+    statementInsertAccessKey.run({
+      createdAt: now,
+      expiresAt: null,
+      id: accessKeyId,
+      keyHash,
+      label,
+      lastUsedAt: null,
+      revokedAt: null,
+      userId,
+    })
+  }
+
+  statementRevokeOtherAccessKeysForUser.run({
+    keyHash,
+    revokedAt: now,
+    userId,
+  })
+
+  return accessKeyId
+}
+
 function ensureAdminAccessKey() {
   if (ADMIN_ACCESS_KEY_ENV !== '') {
     ensureAccessKeyForUser(ADMIN_USER.id, ADMIN_ACCESS_KEY_ENV, 'env：admin默认密钥')
@@ -1115,7 +1191,6 @@ function ensureRoomMembership(roomId, userId, role = 'member') {
 
 function ensureSeededUsers() {
   const now = Date.now()
-  const issuedAccessKeys = []
 
   for (const user of SEEDED_CHAT_USERS) {
     if (!statementSelectUser.get(user.id)) {
@@ -1127,47 +1202,29 @@ function ensureSeededUsers() {
     }
 
     ensureRoomMembership(PUBLIC_ROOM.id, user.id)
-    const existing = statementSelectAnyActiveAccessKeyForUser.get(user.id, now)
-
-    if (existing) {
-      continue
-    }
-
-    const accessKeyValue = createSeededUserAccessKeyValue(user.handle)
-    ensureAccessKeyForUser(user.id, accessKeyValue, `seeded：${user.handle}`)
-    issuedAccessKeys.push({
-      accessKeyValue,
-      displayName: user.displayName,
-      handle: user.handle,
-    })
-  }
-
-  if (issuedAccessKeys.length === 0) {
-    return {
-      filePath: fs.existsSync(SEEDED_USER_ACCESS_KEY_FILE) ? SEEDED_USER_ACCESS_KEY_FILE : null,
-      generatedCount: 0,
-    }
+    ensureFixedAccessKeyForUser(user.id, user.accessKey, `seeded-fixed：${user.handle}`)
   }
 
   const sections = [
-    'Morosonder 聊天室种子用户访问密钥',
+    'Morosonder 聊天室固定种子用户访问密钥',
     `生成时间：${new Date().toISOString()}`,
     '',
   ]
 
-  for (const entry of issuedAccessKeys) {
-    sections.push(`${entry.handle} (${entry.displayName})：${entry.accessKeyValue}`)
+  for (const user of SEEDED_CHAT_USERS) {
+    sections.push(`${user.handle} (${user.displayName})：${user.accessKey}`)
   }
 
   sections.push('')
-  sections.push('说明：这些密钥只在首次为对应用户生成时写入；后续服务重启会继续沿用数据库中的旧密钥，不会自动变更。')
+  sections.push('说明：这些普通用户密钥为固定值；服务启动时会强制写入数据库，并撤销同账号下的其他旧密钥。')
+  sections.push('说明：admin 密钥仍沿用原有逻辑，不受这里的强制同步影响。')
   sections.push('')
 
   fs.writeFileSync(SEEDED_USER_ACCESS_KEY_FILE, sections.join('\n'), 'utf8')
 
   return {
     filePath: SEEDED_USER_ACCESS_KEY_FILE,
-    generatedCount: issuedAccessKeys.length,
+    synchronisedCount: SEEDED_CHAT_USERS.length,
   }
 }
 
