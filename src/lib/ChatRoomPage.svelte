@@ -78,6 +78,11 @@
     type: 'room_permissions_state'
   }
 
+  interface ChatRoomHistoryClearedPayload {
+    roomId: string
+    type: 'room_history_cleared'
+  }
+
   interface ChatSystemRenderItem {
     body: string
     createdAt: number
@@ -110,6 +115,7 @@
     | ChatJoinedPayload
     | ChatMessagePayload
     | ChatPresencePayload
+    | ChatRoomHistoryClearedPayload
     | ChatRoomPermissionsStatePayload
     | ChatRoomsPayload
 
@@ -129,7 +135,7 @@
     id: PUBLIC_CHAT_ROOM_ID,
     latestMessageAt: null,
     memberCount: 0,
-    name: '公共聊天室',
+    name: '公共群聊',
   }
 
   const ATTRIBUTE_FIELDS: Array<{ key: AttributeKey; label: string }> = [
@@ -167,6 +173,7 @@
   let authError = ''
   let isAuthChecking = true
   let currentUser: ChatUser | null = null
+  let isAdminUser = false
   let characterCards: ChatCharacterCard[] = []
   let activeCharacterId: string | null = null
   let messages: ChatMessage[] = []
@@ -176,6 +183,8 @@
   let unreadIncomingCount = 0
   let isAuthPromptOpen = false
   let isCreateRoomPromptOpen = false
+  let isLeftDrawerOpen = false
+  let isRightDrawerOpen = false
   let createRoomDraft = ''
   let createRoomError = ''
   let isRoomPermissionsPromptOpen = false
@@ -202,9 +211,14 @@
   let avatarCropSourceDataUrl = ''
   let avatarCropNaturalWidth = 0
   let avatarCropNaturalHeight = 0
+  let avatarCropSurfaceWidth = AVATAR_CROP_VIEWPORT_SIZE
+  let avatarCropViewportSize = AVATAR_CROP_VIEWPORT_SIZE
   let avatarCropZoom = 1
   let avatarCropOffsetX = 0
   let avatarCropOffsetY = 0
+  let avatarCropPreviewWidth = 0
+  let avatarCropPreviewHeight = 0
+  let avatarCropPreviewTransform = 'translate(-50%, -50%)'
   let avatarCropError = ''
   let avatarCropPointerId: number | null = null
   let avatarCropPointerOriginX = 0
@@ -214,6 +228,24 @@
   let roomList: ChatRoom[] = [ROOM_PLACEHOLDER]
   let activeCharacter: ChatCharacterCard | null = null
   let renderedMessages: ChatRenderItem[] = []
+
+  $: avatarCropViewportSize =
+    avatarCropSurfaceWidth > 0 ? avatarCropSurfaceWidth : AVATAR_CROP_VIEWPORT_SIZE
+
+  $: {
+    const baseScale =
+      avatarCropNaturalWidth <= 0 || avatarCropNaturalHeight <= 0
+        ? 1
+        : Math.max(
+            avatarCropViewportSize / avatarCropNaturalWidth,
+            avatarCropViewportSize / avatarCropNaturalHeight,
+          )
+    const scale = baseScale * avatarCropZoom
+
+    avatarCropPreviewWidth = avatarCropNaturalWidth * scale
+    avatarCropPreviewHeight = avatarCropNaturalHeight * scale
+    avatarCropPreviewTransform = `translate(calc(-50% + ${avatarCropOffsetX}px), calc(-50% + ${avatarCropOffsetY}px))`
+  }
 
   function sanitiseNickname(value: string): string {
     return value.replace(/\s+/g, ' ').trim().slice(0, 24)
@@ -270,9 +302,7 @@
     }
   }
 
-  function isAdminCurrentUser(): boolean {
-    return currentUser?.role === 'admin'
-  }
+  $: isAdminUser = currentUser?.role === 'admin'
 
   function getAllowedUserIdsForRoom(roomId: string, entries: ChatRoomPermission[] = roomPermissions): string[] {
     return entries.find((entry) => entry.roomId === roomId)?.userIds ?? []
@@ -281,10 +311,11 @@
   function openRoomPermissionsPrompt(roomEntry: ChatRoom, event?: MouseEvent): void {
     event?.stopPropagation()
 
-    if (!isAdminCurrentUser()) {
+    if (!isAdminUser) {
       return
     }
 
+    closeMobileDrawers()
     roomPermissionsRoomId = roomEntry.id
     roomPermissionsDraftUserIds = [...getAllowedUserIdsForRoom(roomEntry.id)]
     roomPermissionsError = ''
@@ -326,8 +357,13 @@
       return
     }
 
-    if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
-      roomPermissionsError = '当前未连接聊天室，无法更新房间权限。'
+    if (!isAdminUser) {
+      roomPermissionsError = '只有管理员可以修改房间权限。'
+      return
+    }
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      roomPermissionsError = '当前未连接群聊，无法更新房间权限。'
       return
     }
 
@@ -340,6 +376,48 @@
         userIds: roomPermissionsDraftUserIds,
       }),
     )
+  }
+
+  function clearRoomHistory(): void {
+    if (roomPermissionsRoomId === '') {
+      roomPermissionsError = '目标房间不存在。'
+      return
+    }
+
+    if (!isAdminUser) {
+      roomPermissionsError = '只有管理员可以清空聊天记录。'
+      return
+    }
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      roomPermissionsError = '当前未连接群聊，无法清空聊天记录。'
+      return
+    }
+
+    const selectedRoom = roomList.find((entry) => entry.id === roomPermissionsRoomId)
+    const roomName = selectedRoom?.name ?? '当前房间'
+    const confirmed = window.confirm(`确定要清空「${roomName}」的全部聊天记录吗？该操作不可撤销。`)
+
+    if (!confirmed) {
+      return
+    }
+
+    roomPermissionsError = ''
+    socket.send(
+      JSON.stringify({
+        roomId: roomPermissionsRoomId,
+        type: 'clear_room_history',
+      }),
+    )
+  }
+
+  function handleRoomCardKeydown(roomId: string, event: KeyboardEvent): void {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return
+    }
+
+    event.preventDefault()
+    switchRoom(roomId)
   }
 
   function closeCharacterSheet(): void {
@@ -358,7 +436,7 @@
 
   function getCharacterSheetDescription(): string {
     if (isCreateCharacterPromptOpen) {
-      return '保存后会自动切换到新角色，你可以立刻回到聊天室继续发言和检定。'
+      return '保存后会自动切换到新角色，你可以立刻回到群聊继续发言和检定。'
     }
 
     return '这里负责编辑角色名、头像和九项属性。保存后，新发出的消息会使用新的角色快照。'
@@ -382,8 +460,8 @@
     }
 
     return Math.max(
-      AVATAR_CROP_VIEWPORT_SIZE / avatarCropNaturalWidth,
-      AVATAR_CROP_VIEWPORT_SIZE / avatarCropNaturalHeight,
+      avatarCropViewportSize / avatarCropNaturalWidth,
+      avatarCropViewportSize / avatarCropNaturalHeight,
     )
   }
 
@@ -404,8 +482,8 @@
     y: number
   } {
     const { width, height } = getAvatarCropDisplayMetrics(zoom)
-    const limitX = Math.max(0, (width - AVATAR_CROP_VIEWPORT_SIZE) / 2)
-    const limitY = Math.max(0, (height - AVATAR_CROP_VIEWPORT_SIZE) / 2)
+    const limitX = Math.max(0, (width - avatarCropViewportSize) / 2)
+    const limitY = Math.max(0, (height - avatarCropViewportSize) / 2)
 
     return {
       x: Math.min(limitX, Math.max(-limitX, offsetX)),
@@ -419,20 +497,11 @@
     avatarCropOffsetY = nextOffsets.y
   }
 
-  function getAvatarCropImageStyle(): string {
-    const { width, height } = getAvatarCropDisplayMetrics()
-
-    return [
-      `width: ${width}px`,
-      `height: ${height}px`,
-      `transform: translate(calc(-50% + ${avatarCropOffsetX}px), calc(-50% + ${avatarCropOffsetY}px))`,
-    ].join('; ')
-  }
-
   function resetAvatarCropState(): void {
     avatarCropSourceDataUrl = ''
     avatarCropNaturalWidth = 0
     avatarCropNaturalHeight = 0
+    avatarCropSurfaceWidth = AVATAR_CROP_VIEWPORT_SIZE
     avatarCropZoom = 1
     avatarCropOffsetX = 0
     avatarCropOffsetY = 0
@@ -547,7 +616,7 @@
       throw new Error('CANVAS_CONTEXT_UNAVAILABLE')
     }
 
-    const scaleRatio = AVATAR_CROP_OUTPUT_SIZE / AVATAR_CROP_VIEWPORT_SIZE
+    const scaleRatio = AVATAR_CROP_OUTPUT_SIZE / avatarCropViewportSize
     const { width, height } = getAvatarCropDisplayMetrics()
     const drawWidth = width * scaleRatio
     const drawHeight = height * scaleRatio
@@ -740,7 +809,7 @@
       payload = (await response.json()) as ChatAuthResponse
     } catch {
       payload = {
-        message: '聊天室认证服务返回了无法解析的响应。',
+        message: '群聊认证服务返回了无法解析的响应。',
         ok: false,
       }
     }
@@ -1104,6 +1173,7 @@
   }
 
   function openAuthPrompt(): void {
+    closeMobileDrawers()
     accessKeyDraft = ''
     authError = ''
     isAuthPromptOpen = true
@@ -1217,6 +1287,29 @@
       return
     }
 
+    if (payload.type === 'room_history_cleared') {
+      rooms = rooms.map((entry) =>
+        entry.id === payload.roomId
+          ? {
+              ...entry,
+              latestMessageAt: null,
+            }
+          : entry,
+      )
+      room = rooms.find((entry) => entry.id === activeRoomId) ?? room
+
+      if (payload.roomId === activeRoomId) {
+        messages = []
+        unreadIncomingCount = 0
+      }
+
+      if (isRoomPermissionsPromptOpen && roomPermissionsRoomId === payload.roomId) {
+        closeRoomPermissionsPrompt()
+      }
+
+      return
+    }
+
     if (isCreateRoomPromptOpen) {
       if (socket?.readyState === WebSocket.OPEN && room.id !== '') {
         connectionState = 'connected'
@@ -1313,7 +1406,7 @@
         const payload = JSON.parse(event.data as string) as ChatServerPayload
         await handleServerPayload(payload)
       } catch {
-        connectionError = '聊天室返回了无法解析的消息。'
+        connectionError = '群聊返回了无法解析的消息。'
       }
     })
 
@@ -1322,7 +1415,7 @@
         return
       }
 
-      connectionError = '聊天室连接失败，请确认聊天服务已启动。'
+      connectionError = '群聊连接失败，请确认聊天服务已启动。'
     })
 
     nextSocket.addEventListener('close', () => {
@@ -1342,12 +1435,14 @@
   }
 
   function openCreateRoomPrompt(): void {
+    closeMobileDrawers()
     createRoomDraft = ''
     createRoomError = ''
     isCreateRoomPromptOpen = true
   }
 
   function openCreateCharacterPrompt(): void {
+    closeMobileDrawers()
     isCharacterMenuOpen = false
     isEditCharacterPromptOpen = false
     closeCharacterEditorOnNextState = false
@@ -1359,6 +1454,7 @@
   }
 
   function openEditCharacterPrompt(character: ChatCharacterCard): void {
+    closeMobileDrawers()
     isCharacterMenuOpen = false
     isCreateCharacterPromptOpen = false
     closeCharacterEditorOnNextState = false
@@ -1425,7 +1521,7 @@
     }
 
     if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
-      connectionError = '当前未连接聊天室，无法切换角色。'
+      connectionError = '当前未连接群聊，无法切换角色。'
       return
     }
 
@@ -1448,7 +1544,7 @@
     }
 
     if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
-      connectionError = '当前未连接聊天室，无法发送消息。'
+      connectionError = '当前未连接群聊，无法发送消息。'
       return
     }
 
@@ -1472,6 +1568,7 @@
       return
     }
 
+    closeMobileDrawers()
     activeRoomId = targetRoomId
     persistActiveRoom()
     unreadIncomingCount = 0
@@ -1507,7 +1604,7 @@
     }
 
     if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
-      createRoomError = '当前未连接聊天室，无法创建房间。'
+      createRoomError = '当前未连接群聊，无法创建房间。'
       return
     }
 
@@ -1532,7 +1629,7 @@
     }
 
     if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
-      createCharacterError = '当前未连接聊天室，无法创建角色卡。'
+      createCharacterError = '当前未连接群聊，无法创建角色卡。'
       return
     }
 
@@ -1563,7 +1660,7 @@
     }
 
     if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
-      editCharacterError = '当前未连接聊天室，无法编辑角色卡。'
+      editCharacterError = '当前未连接群聊，无法编辑角色卡。'
       return
     }
 
@@ -1587,22 +1684,6 @@
     }
 
     unreadIncomingCount = 0
-  }
-
-  function getConnectionLabel(state: ChatConnectionState): string {
-    if (state === 'connected') {
-      return '已连接'
-    }
-
-    if (state === 'connecting') {
-      return '连接中'
-    }
-
-    if (state === 'reconnecting') {
-      return '重连中'
-    }
-
-    return '未连接'
   }
 
   onMount(() => {
@@ -1638,59 +1719,66 @@
     clearEditCharacterAvatar()
   })
 
-  $: connectionLabel = getConnectionLabel(connectionState)
   $: canSend = draftMessage.trim() !== '' && connectionState === 'connected'
   $: roomList = rooms.length === 0 ? [ROOM_PLACEHOLDER] : rooms
   $: activeCharacter =
     activeCharacterId === null ? null : characterCards.find((entry) => entry.id === activeCharacterId) ?? null
   $: renderedMessages = buildRenderedMessages(messages)
+
+  function toggleLeftDrawer(): void {
+    isLeftDrawerOpen = !isLeftDrawerOpen
+    if (isLeftDrawerOpen) {
+      isRightDrawerOpen = false
+    }
+  }
+
+  function toggleRightDrawer(): void {
+    isRightDrawerOpen = !isRightDrawerOpen
+    if (isRightDrawerOpen) {
+      isLeftDrawerOpen = false
+    }
+  }
+
+  function closeMobileDrawers(): void {
+    isLeftDrawerOpen = false
+    isRightDrawerOpen = false
+  }
 </script>
 
 <svelte:window onclick={handleWindowClick} />
 
-<section class="chat-page">
-  <section class="board chat-board">
-    <div class="board-head chat-board-head">
-      <div>
-        <h2>聊天室</h2>
-        <p class="chat-board-note">
-          当前支持公共房间和自建房间，保留局域网内十人内文本即时聊天、消息历史、在线成员和自动重连。
-        </p>
-      </div>
-
-      <div class="board-head-side">
-        <div class="board-head-actions">
-          <button class="toolbar-action" type="button" onclick={openAuthPrompt}>
-            {currentUser ? '更换密钥' : '输入密钥'}
-          </button>
-          <button
-            class="toolbar-action"
-            disabled={connectionState === 'connected' || !currentUser}
-            type="button"
-            onclick={() => connectToChat(connectionState === 'reconnecting')}
-          >
-            重新连接
-          </button>
-        </div>
-
-        <div class="chat-connection-indicator" data-state={connectionState}>
-          <span class="chat-connection-dot" aria-hidden="true"></span>
-          <strong>{connectionLabel}</strong>
-          <span>{currentUser ? `身份：${currentUser.displayName}` : isAuthChecking ? '身份校验中' : '等待输入密钥'}</span>
-          <span>{currentUser ? `聊天身份：${resolveChatNicknameFromUser(currentUser)}` : '等待匹配用户身份'}</span>
-          {#if currentUser}
-            <span>{`账号：${currentUser.handle} / ${currentUser.role}`}</span>
-          {/if}
-        </div>
-      </div>
+<section class="chat-page !flex !h-full !w-full !min-h-0 !flex-1 !overflow-hidden">
+  <section class="board chat-board !m-0 !flex !h-full !w-full !min-h-0 !flex-1 !flex-col !overflow-hidden">
+    <div class="flex h-14 shrink-0 items-center justify-between md:hidden">
+      <button aria-label="打开房间列表" class="toolbar-action flex-shrink-0" type="button" onclick={toggleLeftDrawer}>
+        房间
+      </button>
+      <strong class="min-w-0 flex-1 truncate text-center">{room.name}</strong>
+      <button aria-label="打开在线成员列表" class="toolbar-action flex-shrink-0" type="button" onclick={toggleRightDrawer}>
+        成员
+      </button>
     </div>
 
-    <div class="chat-layout">
-      <aside class="chat-panel chat-room-panel">
+    {#if isLeftDrawerOpen || isRightDrawerOpen}
+      <button
+        aria-label="关闭侧边栏"
+        class="fixed inset-0 z-[45] md:hidden"
+        style="background: rgba(15, 23, 42, 0.34);"
+        type="button"
+        onclick={closeMobileDrawers}
+      ></button>
+    {/if}
+
+    <div class="chat-layout !flex !min-h-0 !flex-1 !overflow-hidden">
+      <aside
+        class={`chat-panel chat-room-panel fixed inset-y-0 left-0 z-50 !flex !flex-col !overflow-hidden transition-transform duration-300 ${
+          isLeftDrawerOpen ? 'translate-x-0' : '-translate-x-full'
+        } w-[80vw] max-w-80 md:relative md:inset-auto md:z-auto md:!h-full md:!w-72 md:!shrink-0 md:!translate-x-0`}
+      >
         <div class="chat-panel-head">
           <div>
             <span class="section-label">房间</span>
-            <strong>聊天室列表</strong>
+            <strong>群聊列表</strong>
           </div>
           <div class="chat-panel-head-actions">
             <span>{roomList.length} 个房间</span>
@@ -1705,48 +1793,52 @@
           </div>
         </div>
 
-        <div class="chat-room-list">
+        <div class="chat-room-list !flex-1">
           {#each roomList as entry (entry.id)}
             <div
               class:is-active={entry.id === activeRoomId}
               class="chat-room-card"
             >
-              {#if isAdminCurrentUser()}
-                <button
-                  aria-label={`管理 ${entry.name} 的可见权限`}
-                  class="chat-room-card-action"
-                  type="button"
-                  onclick={(event) => openRoomPermissionsPrompt(entry, event)}
-                >
-                  权限
-                </button>
-              {/if}
-
-              <button class="chat-room-card-main" type="button" onclick={() => switchRoom(entry.id)}>
+              <div class="chat-room-card-head">
                 <div class="chat-room-card-meta">
                   <strong>{entry.name}</strong>
                   <span>{entry.memberCount} 人在线</span>
                 </div>
+                {#if isAdminUser}
+                  <button
+                    aria-label={`管理 ${entry.name} 的可见权限`}
+                    class="chat-room-card-action"
+                    type="button"
+                    onclick={(event) => openRoomPermissionsPrompt(entry, event)}
+                  >
+                    权限
+                  </button>
+                {/if}
+              </div>
+
+              <div
+                aria-label={`进入 ${entry.name}`}
+                class="chat-room-card-main"
+                onkeydown={(event) => handleRoomCardKeydown(entry.id, event)}
+                onclick={() => switchRoom(entry.id)}
+                role="button"
+                tabindex="0"
+              >
                 <span>
                   {entry.latestMessageAt === null
                     ? '暂无消息'
                     : `最近消息 ${formatChatTimestamp(entry.latestMessageAt)}`}
                 </span>
-                <p>
-                  {entry.id === PUBLIC_CHAT_ROOM_ID
-                    ? '默认公共聊天室，拥有该房间权限的用户可见。'
-                    : '自建文本聊天室，仅已授权成员可进入并查看最近消息历史。'}
-                </p>
-              </button>
+              </div>
             </div>
           {/each}
         </div>
       </aside>
 
-      <section class="chat-panel chat-message-panel">
+      <section class="chat-panel chat-message-panel !flex !h-full !min-h-0 !flex-1 !flex-col !overflow-hidden border-x border-gray-200">
         {#if isCreateCharacterPromptOpen || isEditCharacterPromptOpen}
           {@const activeCharacterDraft = getActiveCharacterAttributesDraft()}
-          <div class="chat-character-sheet-page">
+          <div class="chat-character-sheet-page !flex-1">
             <div class="chat-character-sheet-head">
               <div>
                 <span class="section-label">角色子页</span>
@@ -1754,7 +1846,7 @@
                 <p>{getCharacterSheetDescription()}</p>
               </div>
               <button class="toolbar-action" type="button" onclick={closeCharacterSheet}>
-                返回聊天室
+                返回群聊
               </button>
             </div>
 
@@ -1857,7 +1949,7 @@
             </form>
           </div>
         {:else}
-          <div class="chat-message-head">
+          <div class="chat-message-head hidden flex-shrink-0 md:flex">
             <div>
               <span class="section-label">当前房间</span>
               <strong>{room.name}</strong>
@@ -1867,16 +1959,22 @@
 
           <div
             bind:this={messageViewportElement}
-            class="chat-message-viewport"
+            class="chat-message-viewport !flex-1 !overflow-y-auto !p-4"
             onscroll={handleMessageViewportScroll}
           >
             {#if messages.length === 0}
               <div class="chat-empty-state">
-                <strong>聊天室还没有消息。</strong>
-                <p>完成密钥验证后，系统会直接匹配你的账号、角色卡和可进入房间。</p>
+                <div aria-hidden="true" class="chat-empty-state-icon">
+                  <svg fill="none" viewBox="0 0 48 48">
+                    <rect x="10" y="12" width="28" height="20" rx="10"></rect>
+                    <path d="M18 32v6l8-6"></path>
+                  </svg>
+                </div>
+                <strong>  群聊还没有消息。</strong>
+                <p>破坏一片空白会让你快乐吗？</p>
               </div>
             {:else}
-              <div class="chat-message-list">
+              <div class="chat-message-list !p-0">
                 {#each renderedMessages as item (item.id)}
                   {#if item.type === 'system'}
                     <div class="chat-system-message">
@@ -1933,7 +2031,7 @@
             </button>
           {/if}
 
-          <form class="chat-composer" onsubmit={handleMessageSubmit}>
+          <form class="chat-composer !shrink-0 !p-4" onsubmit={handleMessageSubmit}>
             <div bind:this={characterMenuElement} class="chat-character-menu">
               <button
                 aria-expanded={isCharacterMenuOpen}
@@ -1997,12 +2095,11 @@
             </div>
 
             <label class="chat-composer-field">
-              <span>输入消息</span>
               <textarea
                 bind:value={draftMessage}
                 maxlength={CHAT_MAX_MESSAGE_LENGTH}
                 onkeydown={handleComposerKeydown}
-                placeholder="输入消息，回车发送，Shift + Enter 换行；或输入 .ra力量 进行属性检定"
+                placeholder="Shift + Enter 换行"
                 rows="3"
               ></textarea>
             </label>
@@ -2017,7 +2114,11 @@
         {/if}
       </section>
 
-      <aside class="chat-panel chat-member-panel">
+      <aside
+        class={`chat-panel chat-member-panel fixed inset-y-0 right-0 z-50 !flex !flex-col !overflow-hidden transition-transform duration-300 ${
+          isRightDrawerOpen ? 'translate-x-0' : 'translate-x-full'
+        } w-[80vw] max-w-72 md:relative md:inset-auto md:z-auto md:!h-full md:!w-60 md:!shrink-0 md:!translate-x-0`}
+      >
         <div class="chat-panel-head">
           <div>
             <span class="section-label">在线成员</span>
@@ -2026,7 +2127,7 @@
           <span>{members.length} 人</span>
         </div>
 
-        <div class="chat-member-list">
+        <div class="chat-member-list !flex-1">
           {#if members.length === 0}
             <div class="chat-empty-inline">当前还没有在线成员。</div>
           {:else}
@@ -2040,11 +2141,23 @@
         </div>
       </aside>
     </div>
-
-    {#if connectionError !== ''}
-      <div class="chat-error-banner">{connectionError}</div>
-    {/if}
   </section>
+
+  <div class="pointer-events-none fixed bottom-4 right-4 z-30 flex flex-col items-end gap-3 md:bottom-6 md:right-6">
+    {#if connectionError !== ''}
+      <div class="chat-error-banner pointer-events-auto max-w-sm">{connectionError}</div>
+    {/if}
+
+    <div class="pointer-events-auto rounded-xl border border-slate-200 bg-white/94 p-1.5 shadow-[0_14px_28px_rgba(15,23,42,0.1)] backdrop-blur">
+      <button
+        class="inline-flex min-h-8 items-center justify-center rounded-lg bg-slate-900 px-3 py-1.5 text-[0.75rem] font-medium text-white transition hover:bg-slate-700"
+        type="button"
+        onclick={openAuthPrompt}
+      >
+        {currentUser ? '更换密钥' : '输入密钥'}
+      </button>
+    </div>
+  </div>
 
   {#if isAuthPromptOpen}
     <div class="chat-nickname-overlay">
@@ -2089,7 +2202,7 @@
       <form class="chat-nickname-dialog" onsubmit={handleCreateRoomSubmit}>
         <div>
           <span class="section-label">新建房间</span>
-          <h3>创建一个聊天室</h3>
+          <h3>创建一个群聊</h3>
           <p>创建后会自动进入该房间；管理员可以继续为普通用户分配可见权限。</p>
         </div>
 
@@ -2147,6 +2260,9 @@
         {/if}
 
         <div class="chat-nickname-actions">
+          <button class="toolbar-action" type="button" onclick={clearRoomHistory}>
+            清空记录
+          </button>
           <button class="toolbar-action" type="button" onclick={closeRoomPermissionsPrompt}>
             关闭
           </button>
@@ -2169,6 +2285,7 @@
 
         <div
           aria-label="头像裁切画布"
+          bind:clientWidth={avatarCropSurfaceWidth}
           class="chat-avatar-crop-surface"
           onpointercancel={handleAvatarCropPointerUp}
           onpointerdown={handleAvatarCropPointerDown}
@@ -2177,7 +2294,13 @@
           role="application"
         >
           {#if avatarCropSourceDataUrl !== ''}
-            <img alt="待裁切头像" src={avatarCropSourceDataUrl} style={getAvatarCropImageStyle()} />
+            <img
+              alt="待裁切头像"
+              src={avatarCropSourceDataUrl}
+              style:height={`${avatarCropPreviewHeight}px`}
+              style:transform={avatarCropPreviewTransform}
+              style:width={`${avatarCropPreviewWidth}px`}
+            />
           {/if}
           <div class="chat-avatar-crop-frame" aria-hidden="true"></div>
         </div>

@@ -93,6 +93,15 @@
   const DEFAULT_WORLDVIEW_NAME = '未分类世界观'
   const FIXED_LAYOUT_SURFACE_PADDING = 64
   const TRACK_LEADING_GUTTER = 132
+  const CHAT_NAV_FLOAT_SIZE = 58
+  const CHAT_NAV_FLOAT_MARGIN = 18
+  const chatNavPages: Array<{ label: string; page: AppPage }> = [
+    { page: 'home', label: '首页' },
+    { page: 'timeline', label: '故事时间轴' },
+    { page: 'age-chronicle', label: '角色年龄编年' },
+    { page: 'log-workbench', label: '日志展示' },
+    { page: 'chat-room', label: '群聊' },
+  ]
   const defaultTrackPalette = ['#d9e0e6', '#c8dce6', '#d5cae6', '#d1e3d3', '#e1d8e6', '#dde3e8']
   const defaultTrackLabels = ['公共线1', '公共线2', '其它线1', 'ho404线']
   const activeCardBounce = spring(0, { stiffness: 0.22, damping: 0.58 })
@@ -245,6 +254,7 @@
   let timelineSurfaceElement: HTMLDivElement | null = null
   let worldviewMenuElement: HTMLDivElement | null = null
   let tagFilterContainerElement: HTMLDivElement | null = null
+  let chatNavElement: HTMLDivElement | null = null
 
   let timelineTracks: TimelineTrack[] = initialTimelineState.tracks
   let timelineEvents: EditableTimelineEvent[] = initialTimelineState.events
@@ -268,6 +278,19 @@
   let dragDistance = 0
   let suppressClick = false
   let snapTimer: ReturnType<typeof setTimeout> | null = null
+  let isChatNavMenuOpen = false
+  let hasInitialisedChatNavPosition = false
+  let chatNavPositionX = 0
+  let chatNavPositionY = 0
+  let chatNavMenuSide: 'left' | 'right' = 'left'
+  let chatNavPointerId: number | null = null
+  let chatNavPointerOriginX = 0
+  let chatNavPointerOriginY = 0
+  let chatNavOriginX = 0
+  let chatNavOriginY = 0
+  let chatNavMoved = false
+  let suppressChatNavClick = false
+  let chatNavPointerTarget: HTMLElement | null = null
 
   let drawerMode: DrawerMode = 'none'
   let eventEditorMode: EventEditorMode = 'create'
@@ -640,6 +663,11 @@
       return
     }
 
+    if (activePage === 'chat-room' && isChatNavMenuOpen) {
+      isChatNavMenuOpen = false
+      return
+    }
+
     if (drawerMode !== 'none') {
       closeDrawer()
       return
@@ -661,6 +689,10 @@
       return
     }
 
+    if (activePage === 'chat-room' && isChatNavMenuOpen && chatNavElement && !chatNavElement.contains(target)) {
+      isChatNavMenuOpen = false
+    }
+
     if (isWorldviewMenuOpen && worldviewMenuElement && !worldviewMenuElement.contains(target)) {
       isWorldviewMenuOpen = false
     }
@@ -668,6 +700,136 @@
     if (isTagFilterOpen && tagFilterContainerElement && !tagFilterContainerElement.contains(target)) {
       isTagFilterOpen = false
     }
+  }
+
+  function clampChatNavPosition(x: number, y: number): { x: number; y: number } {
+    if (typeof window === 'undefined') {
+      return { x, y }
+    }
+
+    const maxX = Math.max(CHAT_NAV_FLOAT_MARGIN, window.innerWidth - CHAT_NAV_FLOAT_SIZE - CHAT_NAV_FLOAT_MARGIN)
+    const maxY = Math.max(CHAT_NAV_FLOAT_MARGIN, window.innerHeight - CHAT_NAV_FLOAT_SIZE - CHAT_NAV_FLOAT_MARGIN)
+
+    return {
+      x: Math.min(maxX, Math.max(CHAT_NAV_FLOAT_MARGIN, x)),
+      y: Math.min(maxY, Math.max(CHAT_NAV_FLOAT_MARGIN, y)),
+    }
+  }
+
+  function initialiseChatNavPosition(): void {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const defaultPosition = clampChatNavPosition(
+      window.innerWidth - CHAT_NAV_FLOAT_SIZE - CHAT_NAV_FLOAT_MARGIN,
+      Math.round(window.innerHeight * 0.38),
+    )
+
+    chatNavPositionX = defaultPosition.x
+    chatNavPositionY = defaultPosition.y
+    chatNavMenuSide = resolveChatNavMenuSide(defaultPosition.x)
+    hasInitialisedChatNavPosition = true
+  }
+
+  function resolveChatNavMenuSide(positionX = chatNavPositionX): 'left' | 'right' {
+    if (typeof window === 'undefined') {
+      return 'left'
+    }
+
+    const menuWidth = 176
+    const horizontalGap = 12
+    const leftSpace = positionX - CHAT_NAV_FLOAT_MARGIN
+    const rightSpace = window.innerWidth - positionX - CHAT_NAV_FLOAT_SIZE - CHAT_NAV_FLOAT_MARGIN
+
+    if (rightSpace >= menuWidth + horizontalGap || rightSpace >= leftSpace) {
+      return 'right'
+    }
+
+    return 'left'
+  }
+
+  function toggleChatNavMenu(): void {
+    if (suppressChatNavClick) {
+      suppressChatNavClick = false
+      return
+    }
+
+    isChatNavMenuOpen = !isChatNavMenuOpen
+  }
+
+  function navigateFromChatNav(page: AppPage): void {
+    isChatNavMenuOpen = false
+    navigateToPage(page)
+  }
+
+  function handleChatNavPointerDown(event: PointerEvent): void {
+    if (event.button !== 0) {
+      return
+    }
+
+    chatNavPointerId = event.pointerId
+    chatNavPointerOriginX = event.clientX
+    chatNavPointerOriginY = event.clientY
+    chatNavOriginX = chatNavPositionX
+    chatNavOriginY = chatNavPositionY
+    chatNavMoved = false
+    suppressChatNavClick = false
+    chatNavPointerTarget = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+    chatNavPointerTarget?.setPointerCapture(event.pointerId)
+  }
+
+  function finishChatNavDrag(pointerId?: number): void {
+    if (chatNavPointerId === null) {
+      return
+    }
+
+    if (pointerId !== undefined && chatNavPointerTarget?.hasPointerCapture(pointerId)) {
+      chatNavPointerTarget.releasePointerCapture(pointerId)
+    }
+
+    chatNavPointerId = null
+    chatNavPointerTarget = null
+  }
+
+  function handleWindowPointerMove(event: PointerEvent): void {
+    if (chatNavPointerId !== event.pointerId) {
+      return
+    }
+
+    const offsetX = event.clientX - chatNavPointerOriginX
+    const offsetY = event.clientY - chatNavPointerOriginY
+
+    if (!chatNavMoved && Math.hypot(offsetX, offsetY) >= 4) {
+      chatNavMoved = true
+      suppressChatNavClick = true
+      isChatNavMenuOpen = false
+    }
+
+    if (!chatNavMoved) {
+      return
+    }
+
+    const nextPosition = clampChatNavPosition(chatNavOriginX + offsetX, chatNavOriginY + offsetY)
+    chatNavPositionX = nextPosition.x
+    chatNavPositionY = nextPosition.y
+    chatNavMenuSide = resolveChatNavMenuSide(nextPosition.x)
+  }
+
+  function handleWindowResize(): void {
+    if (activePage !== 'chat-room') {
+      return
+    }
+
+    if (!hasInitialisedChatNavPosition) {
+      initialiseChatNavPosition()
+      return
+    }
+
+    const nextPosition = clampChatNavPosition(chatNavPositionX, chatNavPositionY)
+    chatNavPositionX = nextPosition.x
+    chatNavPositionY = nextPosition.y
+    chatNavMenuSide = resolveChatNavMenuSide(nextPosition.x)
   }
 
   function resolveWorldviewContent(name: string): WorldviewContent {
@@ -1359,6 +1521,10 @@
   }
 
   function handleWindowPointerUp(event: PointerEvent): void {
+    if (chatNavPointerId === event.pointerId) {
+      finishChatNavDrag(event.pointerId)
+    }
+
     if (isDragging) {
       finishTimelineDrag(event.pointerId)
     }
@@ -1372,6 +1538,14 @@
     handleWindowPointerUp(event)
   }
 
+  $: if (activePage === 'chat-room' && !hasInitialisedChatNavPosition) {
+    initialiseChatNavPosition()
+  }
+
+  $: if (activePage !== 'chat-room' && isChatNavMenuOpen) {
+    isChatNavMenuOpen = false
+  }
+
   onMount(() => {
     syncRouteWithLocation(true)
     hasMountedRouter = true
@@ -1382,7 +1556,7 @@
   <title>{projectTitle}</title>
   <meta
     name="description"
-    content="Morosonder：面向 CoC 跑团的世界观、时间轴、角色年龄编年、日志工坊与聊天室网站。"
+    content="Morosonder：面向 CoC 跑团的世界观、时间轴、角色年龄编年、日志工坊与群聊网站。"
   />
 </svelte:head>
 
@@ -1391,103 +1565,118 @@
   onkeydown={handleWindowKeydown}
   onpopstate={handleWindowPopState}
   onpointercancel={handleWindowPointerCancel}
+  onpointermove={handleWindowPointerMove}
   onpointerup={handleWindowPointerUp}
+  onresize={handleWindowResize}
 />
 
-<main class:is-home={activePage === 'home'} class="shell" style={themeStyle}>
-  <div class:is-home={activePage === 'home'} class="topbar">
-    <nav class="page-switcher" aria-label="页面切换">
-      <button
-        class:is-current={activePage === 'home'}
-        class="page-switch"
-        type="button"
-        onclick={() => navigateToPage('home')}
-      >
-        首页
-      </button>
-      <button
-        class:is-current={activePage === 'timeline'}
-        class="page-switch"
-        type="button"
-        onclick={() => navigateToPage('timeline')}
-      >
-        故事时间轴
-      </button>
-      <button
-        class:is-current={activePage === 'age-chronicle'}
-        class="page-switch"
-        type="button"
-        onclick={() => navigateToPage('age-chronicle')}
-      >
-        角色年龄编年
-      </button>
-      <button
-        class:is-current={activePage === 'log-workbench'}
-        class="page-switch"
-        type="button"
-        onclick={() => navigateToPage('log-workbench')}
-      >
-        日志展示
-      </button>
-      <button
-        class:is-current={activePage === 'chat-room'}
-        class="page-switch"
-        type="button"
-        onclick={() => navigateToPage('chat-room')}
-      >
-        聊天室
-      </button>
-      {#if activePage === 'event-detail'}
-        <button class:is-current={true} class="page-switch" type="button">
-          事件详情
-        </button>
-      {/if}
-    </nav>
-
-    {#if !['home', 'chat-room'].includes(activePage)}
-      <div bind:this={worldviewMenuElement} class="worldview-dropdown">
-      <button
-        aria-expanded={isWorldviewMenuOpen}
-        class="worldview-dropdown-trigger"
-        type="button"
-        onclick={toggleWorldviewMenu}
-      >
-        <span class="worldview-dropdown-label">世界观</span>
-        <strong>{activeWorldviewName}</strong>
-      </button>
-
-      {#if isWorldviewMenuOpen}
-        <div
-          class="worldview-dropdown-menu"
-          in:seaFogIn={{ delay: 0, duration: 220 }}
-          out:seaFogOut={{ duration: 180 }}
+<main
+  class={activePage === 'chat-room' ? 'min-w-0 !flex !h-screen !w-full !flex-col !overflow-hidden' : 'shell'}
+  class:is-home={activePage === 'home'}
+  style={themeStyle}
+>
+  {#if activePage !== 'chat-room'}
+    <div class="topbar" class:is-home={activePage === 'home'}>
+      <nav class="page-switcher" aria-label="页面切换">
+        <button
+          class:is-current={activePage === 'home'}
+          class="page-switch"
+          type="button"
+          onclick={() => navigateToPage('home')}
         >
-          {#each worldviewOptions as worldview}
-            {@const worldviewContent = resolveWorldviewContent(worldview)}
-            <button
-              class:is-current={selectedWorldview === worldview}
-              class="worldview-dropdown-item"
-              type="button"
-              onclick={() => changeWorldview(worldview)}
-            >
-              <strong>{worldview}</strong>
-              <span>{worldviewContent.description}</span>
-            </button>
-          {/each}
-
-          <div class="worldview-dropdown-divider" aria-hidden="true"></div>
-          <button class="worldview-dropdown-create" type="button" onclick={openCreateWorldview}>
-            + 新增世界观
+          首页
+        </button>
+        <button
+          class:is-current={activePage === 'timeline'}
+          class="page-switch"
+          type="button"
+          onclick={() => navigateToPage('timeline')}
+        >
+          故事时间轴
+        </button>
+        <button
+          class:is-current={activePage === 'age-chronicle'}
+          class="page-switch"
+          type="button"
+          onclick={() => navigateToPage('age-chronicle')}
+        >
+          角色年龄编年
+        </button>
+        <button
+          class:is-current={activePage === 'log-workbench'}
+          class="page-switch"
+          type="button"
+          onclick={() => navigateToPage('log-workbench')}
+        >
+          日志展示
+        </button>
+        <button class="page-switch" type="button" onclick={() => navigateToPage('chat-room')}>
+          群聊
+        </button>
+        {#if activePage === 'event-detail'}
+          <button class:is-current={true} class="page-switch" type="button">
+            事件详情
           </button>
+        {/if}
+      </nav>
+
+      {#if !['home', 'chat-room'].includes(activePage)}
+        <div bind:this={worldviewMenuElement} class="worldview-dropdown">
+        <button
+          aria-expanded={isWorldviewMenuOpen}
+          class="worldview-dropdown-trigger"
+          type="button"
+          onclick={toggleWorldviewMenu}
+        >
+          <span class="worldview-dropdown-label">世界观</span>
+          <strong>{activeWorldviewName}</strong>
+        </button>
+
+        {#if isWorldviewMenuOpen}
+          <div
+            class="worldview-dropdown-menu"
+            in:seaFogIn={{ delay: 0, duration: 220 }}
+            out:seaFogOut={{ duration: 180 }}
+          >
+            {#each worldviewOptions as worldview}
+              {@const worldviewContent = resolveWorldviewContent(worldview)}
+              <button
+                class:is-current={selectedWorldview === worldview}
+                class="worldview-dropdown-item"
+                type="button"
+                onclick={() => changeWorldview(worldview)}
+              >
+                <strong>{worldview}</strong>
+                <span>{worldviewContent.description}</span>
+              </button>
+            {/each}
+
+            <div class="worldview-dropdown-divider" aria-hidden="true"></div>
+            <button class="worldview-dropdown-create" type="button" onclick={openCreateWorldview}>
+              + 新增世界观
+            </button>
+          </div>
+        {/if}
         </div>
       {/if}
-      </div>
-    {/if}
-  </div>
+    </div>
+  {/if}
 
-  <div class:is-home={activePage === 'home'} class="page-scene-stack">
+  <div
+    class={`page-scene-stack min-w-0 ${
+      activePage === 'chat-room' ? '!flex !flex-1 !min-h-0 !items-stretch !overflow-hidden' : ''
+    }`}
+    class:is-home={activePage === 'home'}
+  >
     {#key activePage}
-      <div class:is-home={activePage === 'home'} class="page-scene" in:fade={{ duration: 150 }} out:fade={{ duration: 150 }}>
+      <div
+        class={`page-scene min-w-0 ${
+          activePage === 'chat-room' ? '!flex !h-full !flex-1 !min-h-0 !overflow-hidden' : ''
+        }`}
+        class:is-home={activePage === 'home'}
+        in:fade={{ duration: 150 }}
+        out:fade={{ duration: 150 }}
+      >
     {#if activePage === 'home'}
       <HomePage />
     {:else if activePage === 'timeline'}
@@ -1929,3 +2118,58 @@
     </div>
   {/if}
 </main>
+
+{#if activePage === 'chat-room'}
+  <div
+    bind:this={chatNavElement}
+    class="pointer-events-none fixed z-40"
+    style={`left: ${chatNavPositionX}px; top: ${chatNavPositionY}px;`}
+  >
+    <div class="pointer-events-auto relative flex items-center gap-3">
+      {#if isChatNavMenuOpen}
+        <div
+          id="chat-floating-nav-menu"
+          class={`absolute top-1/2 flex w-44 -translate-y-1/2 flex-col gap-2 rounded-2xl border border-slate-200 bg-white/96 p-2 shadow-[0_18px_40px_rgba(15,23,42,0.12)] backdrop-blur ${
+            chatNavMenuSide === 'left' ? 'right-[calc(100%+0.75rem)]' : 'left-[calc(100%+0.75rem)]'
+          }`}
+          in:fade={{ duration: 120 }}
+          out:fade={{ duration: 100 }}
+        >
+          {#each chatNavPages as item (item.page)}
+            <button
+              aria-current={activePage === item.page ? 'page' : undefined}
+              class={`rounded-xl px-3 py-2 text-left text-sm transition ${
+                activePage === item.page
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-950'
+              }`}
+              type="button"
+              onclick={() => navigateFromChatNav(item.page)}
+            >
+              {item.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+
+      <button
+        aria-controls="chat-floating-nav-menu"
+        aria-expanded={isChatNavMenuOpen}
+        aria-label="打开页面导航"
+        class="flex h-[58px] w-[58px] items-center justify-center rounded-full border border-slate-200 bg-white/96 text-slate-700 shadow-[0_14px_34px_rgba(15,23,42,0.12)] backdrop-blur transition hover:border-slate-300 hover:text-slate-950"
+        type="button"
+        onclick={toggleChatNavMenu}
+        onpointerdown={handleChatNavPointerDown}
+      >
+        <svg aria-hidden="true" class="h-5 w-5" fill="none" viewBox="0 0 24 24">
+          <path
+            d="M4 7h16M4 12h16M4 17h16"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-width="1.8"
+          ></path>
+        </svg>
+      </button>
+    </div>
+  </div>
+{/if}

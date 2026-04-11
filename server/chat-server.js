@@ -14,7 +14,7 @@ const dataDirectory = path.join(projectRoot, 'data')
 
 const CHAT_HOST = process.env.CHAT_HOST ?? '127.0.0.1'
 const CHAT_PORT = Number.parseInt(process.env.CHAT_PORT ?? '3031', 10)
-const PUBLIC_ROOM = { id: 'public', name: '公共聊天室' }
+const PUBLIC_ROOM = { id: 'public', name: '公共群聊' }
 const ADMIN_USER = {
   displayName: '管理员',
   handle: 'admin',
@@ -501,6 +501,11 @@ const statementDeleteRoomMembership = database.prepare(`
   DELETE FROM room_memberships
   WHERE room_id = @roomId
     AND user_id = @userId
+`)
+
+const statementDeleteMessagesForRoom = database.prepare(`
+  DELETE FROM messages
+  WHERE room_id = @roomId
 `)
 
 const statementUpsertSession = database.prepare(`
@@ -1225,7 +1230,7 @@ function ensureAdminAccessKey() {
   fs.writeFileSync(
     ADMIN_ACCESS_KEY_FILE,
     [
-      'timeline 聊天室管理员访问密钥',
+      'timeline 群聊管理员访问密钥',
       `生成时间：${new Date().toISOString()}`,
       `账号：${ADMIN_USER.handle}`,
       `密钥：${adminAccessKey}`,
@@ -1255,20 +1260,24 @@ function ensureSeededUsers() {
   const now = Date.now()
 
   for (const user of SEEDED_CHAT_USERS) {
-    if (!statementSelectUser.get(user.id)) {
+    const existingUser = statementSelectUser.get(user.id)
+
+    if (!existingUser) {
       statementUpsertUser.run({
         ...user,
         createdAt: now,
         updatedAt: now,
       })
+
+      // 只在首次落库时给种子用户默认开放公共群聊，避免重启后覆盖管理员手动调整的公共房间权限。
+      ensureRoomMembership(PUBLIC_ROOM.id, user.id)
     }
 
-    ensureRoomMembership(PUBLIC_ROOM.id, user.id)
     ensureFixedAccessKeyForUser(user.id, user.accessKey, `seeded-fixed：${user.handle}`)
   }
 
   const sections = [
-    'Morosonder 聊天室固定种子用户访问密钥',
+    'Morosonder 群聊固定种子用户访问密钥',
     `生成时间：${new Date().toISOString()}`,
     '',
   ]
@@ -2068,7 +2077,7 @@ function attachSessionToRoom(state, socket, payload) {
 
   if (nickname === '' || sessionId === '') {
     sendJson(socket, {
-      message: '加入聊天室前需要提供昵称和会话标识。',
+      message: '加入群聊前需要提供昵称和会话标识。',
       type: 'error',
     })
     return
@@ -2087,7 +2096,7 @@ function attachSessionToRoom(state, socket, payload) {
 
   if (!room) {
     sendJson(socket, {
-      message: '当前账号还没有任何可进入的聊天室权限。',
+      message: '当前账号还没有任何可进入的群聊权限。',
       type: 'error',
     })
     return
@@ -2164,7 +2173,7 @@ function attachSessionToRoom(state, socket, payload) {
 function handleCreateRoom(state, socket, payload) {
   if (!state.joined) {
     sendJson(socket, {
-      message: '请先进入聊天室，再创建房间。',
+      message: '请先进入群聊，再创建房间。',
       type: 'error',
     })
     return
@@ -2182,7 +2191,7 @@ function handleCreateRoom(state, socket, payload) {
 
   if (statementSelectRoomByName.get(roomName)) {
     sendJson(socket, {
-      message: '已存在同名聊天室，请换一个名称。',
+      message: '已存在同名群聊，请换一个名称。',
       type: 'error',
     })
     return
@@ -2228,9 +2237,9 @@ function revokeRoomAccessForUsers(roomId, removedUserIds) {
 }
 
 function handleUpdateRoomPermissions(state, socket, payload) {
-  if (!state.joined || state.userId === '') {
+  if (state.userId === '') {
     sendJson(socket, {
-      message: '请先进入聊天室，再修改房间权限。',
+      message: '请先完成管理员身份验证，再修改房间权限。',
       type: 'error',
     })
     return
@@ -2278,6 +2287,10 @@ function handleUpdateRoomPermissions(state, socket, payload) {
   const removedUserIds = new Set()
 
   for (const membership of existingMemberships) {
+    if (membership.role === 'owner') {
+      continue
+    }
+
     if (nextAllowedUserIds.has(membership.userId)) {
       continue
     }
@@ -2300,6 +2313,59 @@ function handleUpdateRoomPermissions(state, socket, payload) {
   revokeRoomAccessForUsers(roomId, removedUserIds)
   broadcastRooms()
   broadcastRoomPermissionStateToAdmins()
+}
+
+function handleClearRoomHistory(state, socket, payload) {
+  if (state.userId === '') {
+    sendJson(socket, {
+      message: '请先完成管理员身份验证，再清空聊天记录。',
+      type: 'error',
+    })
+    return
+  }
+
+  if (!isAdminUser(state.userId)) {
+    sendJson(socket, {
+      message: '只有管理员可以清空聊天记录。',
+      type: 'error',
+    })
+    return
+  }
+
+  const roomId = String(payload.roomId ?? '').trim()
+
+  if (roomId === '') {
+    sendJson(socket, {
+      message: '目标房间不存在。',
+      type: 'error',
+    })
+    return
+  }
+
+  const room = statementSelectRoom.get(roomId)
+
+  if (!room) {
+    sendJson(socket, {
+      message: '目标房间不存在。',
+      type: 'error',
+    })
+    return
+  }
+
+  statementDeleteMessagesForRoom.run({ roomId })
+
+  if (!state.joined || state.roomId !== roomId) {
+    sendJson(socket, {
+      roomId,
+      type: 'room_history_cleared',
+    })
+  }
+
+  broadcastToRoom(roomId, {
+    roomId,
+    type: 'room_history_cleared',
+  })
+  broadcastRooms()
 }
 
 function sendCharacterState(socket, sessionId, userId) {
@@ -2332,7 +2398,7 @@ function sendCharacterState(socket, sessionId, userId) {
 function handleCreateCharacterCard(state, socket, payload) {
   if (!state.joined || state.sessionId === '' || state.userId === '') {
     sendJson(socket, {
-      message: '请先进入聊天室，再创建角色卡。',
+      message: '请先进入群聊，再创建角色卡。',
       type: 'error',
     })
     return
@@ -2356,7 +2422,7 @@ function handleCreateCharacterCard(state, socket, payload) {
 function handleUpdateCharacterCard(state, socket, payload) {
   if (!state.joined || state.sessionId === '' || state.userId === '') {
     sendJson(socket, {
-      message: '请先进入聊天室，再编辑角色卡。',
+      message: '请先进入群聊，再编辑角色卡。',
       type: 'error',
     })
     return
@@ -2378,7 +2444,7 @@ function handleUpdateCharacterCard(state, socket, payload) {
 function handleSwitchCharacter(state, socket, payload) {
   if (!state.joined || state.sessionId === '' || state.userId === '') {
     sendJson(socket, {
-      message: '请先进入聊天室，再切换角色。',
+      message: '请先进入群聊，再切换角色。',
       type: 'error',
     })
     return
@@ -2463,7 +2529,7 @@ function handleDiceCommand(state, socket, body) {
 function handleChatMessage(state, socket, payload) {
   if (!state.joined) {
     sendJson(socket, {
-      message: '请先加入聊天室。',
+      message: '请先加入群聊。',
       type: 'error',
     })
     return
@@ -2711,7 +2777,7 @@ const server = http.createServer((request, response) => {
         health: '/health',
         websocket: '/ws',
       },
-      message: '聊天室服务正在运行。请通过前端页面访问聊天室，或用 /health 检查服务状态。',
+      message: '群聊服务正在运行。请通过前端页面访问群聊，或用 /health 检查服务状态。',
       ok: true,
       roomId: PUBLIC_ROOM.id,
       roomCount: statementCountRooms.get().count,
@@ -2793,6 +2859,11 @@ websocketServer.on('connection', (socket, request) => {
       return
     }
 
+    if (payload.type === 'clear_room_history') {
+      handleClearRoomHistory(state, socket, payload)
+      return
+    }
+
     if (payload.type === 'create_character_card') {
       handleCreateCharacterCard(state, socket, payload)
       return
@@ -2826,7 +2897,7 @@ websocketServer.on('connection', (socket, request) => {
 server.listen(CHAT_PORT, CHAT_HOST, () => {
   const origin = CHAT_HOST === '0.0.0.0' ? 'localhost' : CHAT_HOST
 
-  console.log(`聊天室服务已启动: http://${origin}:${CHAT_PORT}`)
+  console.log(`群聊服务已启动: http://${origin}:${CHAT_PORT}`)
   console.log(`管理员账号: ${ADMIN_USER.handle}`)
 
   if (adminAccessKeySeed.source === 'env') {
