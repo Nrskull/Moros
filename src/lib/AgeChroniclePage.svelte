@@ -876,7 +876,8 @@
               </div>
 
               {#each visibleCharacterProfiles as profile (profile.id)}
-                {@const cellDescription = getCellDescription(profile.id, entry.id).trim()}
+                {@const cellDescriptionKey = createAgeCellDescriptionKey(profile.id, entry.id)}
+                {@const cellDescription = (cellDescriptions[cellDescriptionKey] ?? '').trim()}
                 <button
                   class="age-cell age-value-cell"
                   style={`--cell-color:${profile.color}; --cell-tint:${getAgeTone(profile.color)};`}
