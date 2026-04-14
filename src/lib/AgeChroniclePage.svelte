@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { slide } from 'svelte/transition'
   import WorldviewHero from './WorldviewHero.svelte'
   import {
@@ -10,6 +10,7 @@
     type CharacterAgeProfile,
     type ChronicleEntry,
   } from './age-chronicle'
+  import { buildChatHttpUrl, type ChatUser } from './chat-room'
 
   export let worldviewDescription = ''
   export let worldviewHasCover = true
@@ -23,6 +24,7 @@
   const DEFAULT_CHRONICLE_NOTE = '补充这一节点的事件背景或阶段说明。'
   const AGE_CHRONICLE_STORAGE_KEY_PREFIX = 'morosonder:age-chronicle:v1'
   const AGE_CELL_DESCRIPTION_PLACEHOLDER = '记录这一年的状态、事件或身份变化。'
+  const AGE_CHRONICLE_SAVE_DEBOUNCE_MS = 450
 
   interface StoredAgeChronicleState {
     cellDescriptions: Record<string, string>
@@ -33,6 +35,15 @@
     nextChronicleIndex: number
   }
 
+  interface AgeChronicleApiResponse {
+    authenticated?: boolean
+    currentUser?: ChatUser
+    message?: string
+    ok: boolean
+    state?: StoredAgeChronicleState | null
+    updatedAt?: number
+  }
+
   let nextCharacterIndex = sampleCharacterProfiles.length
   let nextChronicleIndex = sampleChronicleEntries.length
 
@@ -40,6 +51,16 @@
   let draggedCharacterId = ''
   let loadedWorldviewStorageKey = ''
   let isStorageHydrated = false
+  let currentUser: ChatUser | null = null
+  let accessKeyDraft = ''
+  let authError = ''
+  let isAuthChecking = false
+  let isAuthPromptOpen = false
+  let sharedSyncTimer: ReturnType<typeof setTimeout> | null = null
+  let isSharedStateLoaded = false
+  let isApplyingSharedState = false
+  let lastSharedStateSnapshot = ''
+  let sharedSyncError = ''
   let isCellDescriptionPromptOpen = false
   let activeDescriptionProfileId = ''
   let activeDescriptionEntryId = ''
@@ -252,6 +273,38 @@
     }
   }
 
+  function sanitiseStoredAgeChronicleState(input: unknown): StoredAgeChronicleState | null {
+    if (!isRecord(input)) {
+      return null
+    }
+
+    const nextChronicleEntries = sanitiseChronicleEntries(input.chronicleEntries)
+    const nextCharacterProfiles = sanitiseCharacterProfiles(input.characterProfiles)
+
+    return {
+      cellDescriptions: sanitiseCellDescriptions(
+        input.cellDescriptions,
+        nextCharacterProfiles,
+        nextChronicleEntries,
+      ),
+      characterProfiles: nextCharacterProfiles,
+      chronicleEntries: nextChronicleEntries,
+      hiddenCharacterIds: sanitiseHiddenCharacterIds(input.hiddenCharacterIds, nextCharacterProfiles),
+      nextCharacterIndex: resolveNextStoredIndex(
+        input.nextCharacterIndex,
+        'char_custom_',
+        nextCharacterProfiles.map((profile) => profile.id),
+        sampleCharacterProfiles.length,
+      ),
+      nextChronicleIndex: resolveNextStoredIndex(
+        input.nextChronicleIndex,
+        'chronicle_custom_',
+        nextChronicleEntries.map((entry) => entry.id),
+        sampleChronicleEntries.length,
+      ),
+    }
+  }
+
   function readStoredAgeChronicleState(storageKey: string): StoredAgeChronicleState | null {
     if (typeof localStorage === 'undefined') {
       return null
@@ -265,36 +318,7 @@
       }
 
       const parsed = JSON.parse(raw) as unknown
-
-      if (!isRecord(parsed)) {
-        return null
-      }
-
-      const nextChronicleEntries = sanitiseChronicleEntries(parsed.chronicleEntries)
-      const nextCharacterProfiles = sanitiseCharacterProfiles(parsed.characterProfiles)
-
-      return {
-        cellDescriptions: sanitiseCellDescriptions(
-          parsed.cellDescriptions,
-          nextCharacterProfiles,
-          nextChronicleEntries,
-        ),
-        characterProfiles: nextCharacterProfiles,
-        chronicleEntries: nextChronicleEntries,
-        hiddenCharacterIds: sanitiseHiddenCharacterIds(parsed.hiddenCharacterIds, nextCharacterProfiles),
-        nextCharacterIndex: resolveNextStoredIndex(
-          parsed.nextCharacterIndex,
-          'char_custom_',
-          nextCharacterProfiles.map((profile) => profile.id),
-          sampleCharacterProfiles.length,
-        ),
-        nextChronicleIndex: resolveNextStoredIndex(
-          parsed.nextChronicleIndex,
-          'chronicle_custom_',
-          nextChronicleEntries.map((entry) => entry.id),
-          sampleChronicleEntries.length,
-        ),
-      }
+      return sanitiseStoredAgeChronicleState(parsed)
     } catch {
       return null
     }
@@ -312,6 +336,17 @@
     resetCharacterDraft()
   }
 
+  function createCurrentStoredAgeChronicleState(): StoredAgeChronicleState {
+    return {
+      cellDescriptions: { ...cellDescriptions },
+      characterProfiles: cloneCharacterProfiles(characterProfiles),
+      chronicleEntries: cloneChronicleEntries(chronicleEntries),
+      hiddenCharacterIds: [...hiddenCharacterIds],
+      nextCharacterIndex,
+      nextChronicleIndex,
+    }
+  }
+
   function loadAgeChronicleState(targetWorldview = worldviewName): void {
     const storageKey = getAgeChronicleStorageKey(targetWorldview)
     const storedState = readStoredAgeChronicleState(storageKey) ?? createDefaultStoredState()
@@ -326,20 +361,214 @@
       return
     }
 
-    const payload: StoredAgeChronicleState = {
-      cellDescriptions: { ...cellDescriptions },
-      characterProfiles: cloneCharacterProfiles(characterProfiles),
-      chronicleEntries: cloneChronicleEntries(chronicleEntries),
-      hiddenCharacterIds: [...hiddenCharacterIds],
-      nextCharacterIndex,
-      nextChronicleIndex,
-    }
+    const payload = createCurrentStoredAgeChronicleState()
 
     try {
       localStorage.setItem(loadedWorldviewStorageKey, JSON.stringify(payload))
     } catch {
       // Ignore quota or serialisation failures and keep the page usable.
     }
+  }
+
+  function clearSharedSyncTimer(): void {
+    if (sharedSyncTimer === null) {
+      return
+    }
+
+    window.clearTimeout(sharedSyncTimer)
+    sharedSyncTimer = null
+  }
+
+  async function requestAgeChronicleApi(pathname: string, init?: RequestInit): Promise<{
+    payload: AgeChronicleApiResponse
+    status: number
+  }> {
+    const headers = new Headers(init?.headers ?? {})
+
+    if (init?.body && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
+
+    const response = await fetch(buildChatHttpUrl(pathname), {
+      ...init,
+      credentials: 'include',
+      headers,
+    })
+
+    let payload: AgeChronicleApiResponse = { ok: response.ok }
+
+    try {
+      payload = (await response.json()) as AgeChronicleApiResponse
+    } catch {
+      payload = {
+        message: '共享编年服务返回了无法解析的响应。',
+        ok: false,
+      }
+    }
+
+    return {
+      payload: {
+        ...payload,
+        ok: response.ok && payload.ok !== false,
+      },
+      status: response.status,
+    }
+  }
+
+  async function restoreSharedAuthSession(): Promise<void> {
+    isAuthChecking = true
+
+    try {
+      const { payload } = await requestAgeChronicleApi('/auth/me', { method: 'GET' })
+      currentUser = payload.ok && payload.authenticated === true && payload.currentUser ? payload.currentUser : null
+    } catch {
+      currentUser = null
+    } finally {
+      isAuthChecking = false
+    }
+  }
+
+  async function handleAccessKeySubmit(event: SubmitEvent): Promise<void> {
+    event.preventDefault()
+
+    const accessKey = accessKeyDraft.trim()
+
+    if (accessKey === '') {
+      authError = '请输入访问密钥。'
+      return
+    }
+
+    isAuthChecking = true
+    authError = ''
+
+    try {
+      const { payload } = await requestAgeChronicleApi('/auth/access-key', {
+        body: JSON.stringify({ accessKey }),
+        method: 'POST',
+      })
+
+      if (!payload.ok || !payload.currentUser) {
+        authError = payload.message ?? '访问密钥验证失败。'
+        return
+      }
+
+      currentUser = payload.currentUser
+      accessKeyDraft = ''
+      authError = ''
+      isAuthPromptOpen = false
+      sharedSyncError = ''
+      queueSharedStateSync()
+    } catch {
+      authError = '访问密钥验证失败，请确认聊天服务已启动。'
+    } finally {
+      isAuthChecking = false
+    }
+  }
+
+  async function loadSharedAgeChronicleState(targetWorldview = worldviewName): Promise<void> {
+    const storageKey = getAgeChronicleStorageKey(targetWorldview)
+    const fallbackState = readStoredAgeChronicleState(storageKey) ?? createDefaultStoredState()
+    let nextState = fallbackState
+
+    isApplyingSharedState = true
+    clearSharedSyncTimer()
+
+    try {
+      const requestUrl = `/age-chronicle/state?worldview=${encodeURIComponent(targetWorldview)}`
+      const { payload } = await requestAgeChronicleApi(requestUrl, { method: 'GET' })
+      const remoteState = sanitiseStoredAgeChronicleState(payload.state ?? null)
+
+      if (payload.ok) {
+        sharedSyncError = ''
+      }
+
+      if (payload.ok && remoteState) {
+        nextState = remoteState
+      }
+    } catch {
+      sharedSyncError = '共享编年服务暂时不可用，当前显示本地缓存。'
+    }
+
+    applyStoredAgeChronicleState(nextState)
+    loadedWorldviewStorageKey = storageKey
+    isStorageHydrated = true
+    isSharedStateLoaded = true
+    isApplyingSharedState = false
+    lastSharedStateSnapshot = JSON.stringify(createCurrentStoredAgeChronicleState())
+    persistAgeChronicleState()
+  }
+
+  async function saveSharedAgeChronicleState(
+    state = createCurrentStoredAgeChronicleState(),
+    snapshot = JSON.stringify(state),
+  ): Promise<void> {
+    clearSharedSyncTimer()
+
+    if (!isSharedStateLoaded || isApplyingSharedState || snapshot === lastSharedStateSnapshot) {
+      return
+    }
+
+    if (!currentUser) {
+      authError = ''
+      isAuthPromptOpen = true
+      sharedSyncError = '共享保存需要先输入访问密钥。'
+      return
+    }
+
+    try {
+      const { payload, status } = await requestAgeChronicleApi('/age-chronicle/state', {
+        body: JSON.stringify({
+          state,
+          worldview: worldviewName,
+        }),
+        method: 'POST',
+      })
+
+      if (!payload.ok) {
+        if (status === 401) {
+          currentUser = null
+          authError = '共享保存需要先输入访问密钥。'
+          isAuthPromptOpen = true
+          sharedSyncError = authError
+          return
+        }
+
+        sharedSyncError = payload.message ?? '共享编年保存失败。'
+        return
+      }
+
+      const savedState = sanitiseStoredAgeChronicleState(payload.state ?? state) ?? state
+
+      sharedSyncError = ''
+      lastSharedStateSnapshot = JSON.stringify(savedState)
+
+      if (lastSharedStateSnapshot !== JSON.stringify(createCurrentStoredAgeChronicleState())) {
+        isApplyingSharedState = true
+        applyStoredAgeChronicleState(savedState)
+        isApplyingSharedState = false
+        persistAgeChronicleState()
+      }
+    } catch {
+      sharedSyncError = '共享编年保存失败，请确认聊天服务已启动。'
+    }
+  }
+
+  function queueSharedStateSync(): void {
+    if (typeof window === 'undefined' || !isStorageHydrated || !isSharedStateLoaded || isApplyingSharedState) {
+      return
+    }
+
+    const state = createCurrentStoredAgeChronicleState()
+    const snapshot = JSON.stringify(state)
+
+    if (snapshot === lastSharedStateSnapshot) {
+      return
+    }
+
+    clearSharedSyncTimer()
+    sharedSyncTimer = window.setTimeout(() => {
+      void saveSharedAgeChronicleState(state, snapshot)
+    }, AGE_CHRONICLE_SAVE_DEBOUNCE_MS)
   }
 
   function createChronicleId(): string {
@@ -573,11 +802,16 @@
   }
 
   onMount(() => {
-    loadAgeChronicleState(worldviewName)
+    void restoreSharedAuthSession()
+    void loadSharedAgeChronicleState(worldviewName)
   })
 
-  $: if (isStorageHydrated && loadedWorldviewStorageKey !== getAgeChronicleStorageKey(worldviewName)) {
-    loadAgeChronicleState(worldviewName)
+  onDestroy(() => {
+    clearSharedSyncTimer()
+  })
+
+  $: if (isSharedStateLoaded && loadedWorldviewStorageKey !== getAgeChronicleStorageKey(worldviewName)) {
+    void loadSharedAgeChronicleState(worldviewName)
   }
 
   $: if (isStorageHydrated) {
@@ -589,6 +823,17 @@
     nextChronicleIndex
     nextCharacterIndex
     persistAgeChronicleState()
+  }
+
+  $: if (isStorageHydrated && isSharedStateLoaded && !isApplyingSharedState) {
+    currentUser
+    chronicleEntries
+    characterProfiles
+    hiddenCharacterIds
+    cellDescriptions
+    nextChronicleIndex
+    nextCharacterIndex
+    queueSharedStateSync()
   }
 </script>
 
@@ -800,9 +1045,14 @@
           <p class="section-label">编年视图</p>
           <h2>同一节点下的角色年龄对照</h2>
         </div>
-        <p class="board-note">
-          点击角色条可切换显示，拖动可调整左右顺序，删除也在这里完成。
-        </p>
+        <div>
+          <p class="board-note">
+            点击角色条可切换显示，拖动可调整左右顺序，删除也在这里完成。
+          </p>
+          {#if sharedSyncError !== ''}
+            <p class="board-note">{sharedSyncError}</p>
+          {/if}
+        </div>
       </div>
 
       <div class="age-legend age-legend-interactive" aria-label="角色图例">
@@ -946,6 +1196,42 @@
           </button>
         </div>
       </div>
+    </div>
+  {/if}
+
+  {#if isAuthPromptOpen}
+    <div class="chat-nickname-overlay">
+      <form class="chat-nickname-dialog" onsubmit={handleAccessKeySubmit}>
+        <div>
+          <span class="section-label">共享同步</span>
+          <h3>先输入访问密钥</h3>
+          <p>年龄编年现在会同步到共享服务。输入一次密钥后，其他用户就能看到你的修改。</p>
+        </div>
+
+        <label class="chat-nickname-field">
+          <span>访问密钥</span>
+          <input
+            bind:value={accessKeyDraft}
+            autocomplete="off"
+            placeholder="输入管理员分发的访问密钥"
+            spellcheck="false"
+            type="password"
+          />
+        </label>
+
+        {#if authError !== ''}
+          <div class="chat-nickname-error">{authError}</div>
+        {/if}
+
+        <div class="chat-nickname-actions">
+          <button class="toolbar-action" type="button" onclick={() => (isAuthPromptOpen = false)}>
+            稍后再说
+          </button>
+          <button class="toolbar-action toolbar-primary" disabled={isAuthChecking} type="submit">
+            {isAuthChecking ? '验证中…' : '验证并同步'}
+          </button>
+        </div>
+      </form>
     </div>
   {/if}
 </section>

@@ -84,11 +84,20 @@ const SEEDED_USER_ACCESS_KEY_FILE = path.join(dataDirectory, 'seeded-user-access
 const ADMIN_ACCESS_KEY_ENV = String(process.env.CHAT_ADMIN_ACCESS_KEY ?? '').trim()
 const MAX_HISTORY_LIMIT = 80
 const MAX_MESSAGE_LENGTH = 500
+const MAX_REPLY_PREVIEW_LENGTH = 140
 const MAX_NICKNAME_LENGTH = 24
 const MAX_ROOM_NAME_LENGTH = 32
 const MAX_CHARACTER_NAME_LENGTH = 32
 const MAX_ATTRIBUTE_VALUE = 100
 const MAX_AVATAR_DATA_URL_LENGTH = 400000
+const AGE_CHRONICLE_MAX_WORLDVIEW_LENGTH = 80
+const AGE_CHRONICLE_MAX_CHRONICLE_COUNT = 400
+const AGE_CHRONICLE_MAX_CHARACTER_COUNT = 200
+const AGE_CHRONICLE_MAX_LABEL_LENGTH = 80
+const AGE_CHRONICLE_MAX_NOTE_LENGTH = 4000
+const AGE_CHRONICLE_MAX_CHARACTER_DISPLAY_NAME_LENGTH = 64
+const AGE_CHRONICLE_MAX_COLOR_LENGTH = 24
+const AGE_CHRONICLE_MAX_CELL_DESCRIPTION_LENGTH = 4000
 const CHAT_PRESENTATION_BUBBLE = 'bubble'
 const CHAT_PRESENTATION_KP_NARRATION = 'kp-narration'
 const ADMIN_KP_CHARACTER_NAME = 'KP'
@@ -167,6 +176,11 @@ database.exec(`
     speaker_character_id TEXT,
     speaker_avatar_data_url TEXT,
     speaker_display_mode TEXT NOT NULL,
+    reply_to_message_id TEXT,
+    reply_to_speaker_name TEXT,
+    reply_to_body TEXT,
+    deleted_at INTEGER,
+    deleted_by_user_id TEXT,
     kind TEXT NOT NULL,
     body TEXT NOT NULL,
     created_at INTEGER NOT NULL,
@@ -235,6 +249,14 @@ database.exec(`
     updated_at INTEGER NOT NULL,
     FOREIGN KEY (character_id) REFERENCES character_cards(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS age_chronicle_states (
+    worldview_name TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by_user_id TEXT,
+    FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
+  );
 `)
 
 function ensureColumn(tableName, columnName, columnDefinition) {
@@ -256,6 +278,11 @@ ensureColumn('messages', 'speaker_name', 'speaker_name TEXT')
 ensureColumn('messages', 'speaker_character_id', 'speaker_character_id TEXT')
 ensureColumn('messages', 'speaker_avatar_data_url', 'speaker_avatar_data_url TEXT')
 ensureColumn('messages', 'speaker_display_mode', `speaker_display_mode TEXT NOT NULL DEFAULT '${CHAT_PRESENTATION_BUBBLE}'`)
+ensureColumn('messages', 'reply_to_message_id', 'reply_to_message_id TEXT')
+ensureColumn('messages', 'reply_to_speaker_name', 'reply_to_speaker_name TEXT')
+ensureColumn('messages', 'reply_to_body', 'reply_to_body TEXT')
+ensureColumn('messages', 'deleted_at', 'deleted_at INTEGER')
+ensureColumn('messages', 'deleted_by_user_id', 'deleted_by_user_id TEXT')
 
 database.exec(`
   UPDATE messages
@@ -491,6 +518,26 @@ const statementCountRooms = database.prepare(`
   FROM rooms
 `)
 
+const statementSelectAgeChronicleState = database.prepare(`
+  SELECT
+    worldview_name AS worldviewName,
+    state_json AS stateJson,
+    updated_at AS updatedAt,
+    updated_by_user_id AS updatedByUserId
+  FROM age_chronicle_states
+  WHERE worldview_name = ?
+  LIMIT 1
+`)
+
+const statementUpsertAgeChronicleState = database.prepare(`
+  INSERT INTO age_chronicle_states (worldview_name, state_json, updated_at, updated_by_user_id)
+  VALUES (@worldviewName, @stateJson, @updatedAt, @updatedByUserId)
+  ON CONFLICT(worldview_name) DO UPDATE SET
+    state_json = excluded.state_json,
+    updated_at = excluded.updated_at,
+    updated_by_user_id = excluded.updated_by_user_id
+`)
+
 const statementInsertRoomMembership = database.prepare(`
   INSERT INTO room_memberships (room_id, user_id, role, created_at)
   VALUES (@roomId, @userId, @role, @createdAt)
@@ -615,6 +662,11 @@ const statementInsertMessage = database.prepare(`
     speaker_character_id,
     speaker_avatar_data_url,
     speaker_display_mode,
+    reply_to_message_id,
+    reply_to_speaker_name,
+    reply_to_body,
+    deleted_at,
+    deleted_by_user_id,
     kind,
     body,
     created_at
@@ -629,6 +681,11 @@ const statementInsertMessage = database.prepare(`
     @speakerCharacterId,
     @speakerAvatarDataUrl,
     @speakerDisplayMode,
+    @replyToMessageId,
+    @replyToSpeakerName,
+    @replyToBody,
+    @deletedAt,
+    @deletedByUserId,
     @kind,
     @body,
     @createdAt
@@ -797,6 +854,11 @@ const statementSelectMessagesSince = database.prepare(`
     messages.speaker_character_id AS speakerCharacterId,
     messages.speaker_avatar_data_url AS speakerAvatarDataUrl,
     messages.speaker_display_mode AS speakerDisplayMode,
+    messages.reply_to_message_id AS replyToMessageId,
+    messages.reply_to_speaker_name AS replyToSpeakerName,
+    messages.reply_to_body AS replyToBody,
+    messages.deleted_at AS deletedAt,
+    messages.deleted_by_user_id AS deletedByUserId,
     messages.kind,
     messages.body,
     messages.created_at AS createdAt
@@ -819,6 +881,11 @@ const statementSelectRecentMessages = database.prepare(`
     recent.speaker_character_id AS speakerCharacterId,
     recent.speaker_avatar_data_url AS speakerAvatarDataUrl,
     recent.speaker_display_mode AS speakerDisplayMode,
+    recent.reply_to_message_id AS replyToMessageId,
+    recent.reply_to_speaker_name AS replyToSpeakerName,
+    recent.reply_to_body AS replyToBody,
+    recent.deleted_at AS deletedAt,
+    recent.deleted_by_user_id AS deletedByUserId,
     recent.kind,
     recent.body,
     recent.created_at AS createdAt
@@ -834,6 +901,11 @@ const statementSelectRecentMessages = database.prepare(`
       speaker_character_id,
       speaker_avatar_data_url,
       speaker_display_mode,
+      reply_to_message_id,
+      reply_to_speaker_name,
+      reply_to_body,
+      deleted_at,
+      deleted_by_user_id,
       kind,
       body,
       created_at
@@ -844,6 +916,40 @@ const statementSelectRecentMessages = database.prepare(`
   ) recent
   LEFT JOIN sessions ON sessions.id = recent.session_id
   ORDER BY sequence ASC
+`)
+
+const statementSelectMessageById = database.prepare(`
+  SELECT
+    messages.sequence,
+    messages.id,
+    messages.room_id AS roomId,
+    messages.session_id AS sessionId,
+    COALESCE(messages.user_id, sessions.user_id) AS userId,
+    messages.nickname,
+    messages.speaker_name AS speakerName,
+    messages.speaker_character_id AS speakerCharacterId,
+    messages.speaker_avatar_data_url AS speakerAvatarDataUrl,
+    messages.speaker_display_mode AS speakerDisplayMode,
+    messages.reply_to_message_id AS replyToMessageId,
+    messages.reply_to_speaker_name AS replyToSpeakerName,
+    messages.reply_to_body AS replyToBody,
+    messages.deleted_at AS deletedAt,
+    messages.deleted_by_user_id AS deletedByUserId,
+    messages.kind,
+    messages.body,
+    messages.created_at AS createdAt
+  FROM messages
+  LEFT JOIN sessions ON sessions.id = messages.session_id
+  WHERE messages.id = ?
+  LIMIT 1
+`)
+
+const statementRevokeMessage = database.prepare(`
+  UPDATE messages
+  SET deleted_at = @deletedAt,
+      deleted_by_user_id = @deletedByUserId
+  WHERE id = @id
+    AND deleted_at IS NULL
 `)
 
 statementInsertRoom.run({
@@ -1371,6 +1477,11 @@ function sanitiseMessageBody(value) {
   return body.slice(0, MAX_MESSAGE_LENGTH)
 }
 
+function buildReplyPreviewBody(value) {
+  const compact = String(value ?? '').replace(/\s+/g, ' ').trim()
+  return compact.slice(0, MAX_REPLY_PREVIEW_LENGTH)
+}
+
 function sanitiseRoomName(value) {
   const roomName = String(value ?? '').replace(/\s+/g, ' ').trim()
   return roomName.slice(0, MAX_ROOM_NAME_LENGTH)
@@ -1379,6 +1490,145 @@ function sanitiseRoomName(value) {
 function sanitiseCharacterName(value) {
   const characterName = String(value ?? '').replace(/\s+/g, ' ').trim()
   return characterName.slice(0, MAX_CHARACTER_NAME_LENGTH)
+}
+
+function sanitiseAgeChronicleWorldview(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, AGE_CHRONICLE_MAX_WORLDVIEW_LENGTH)
+}
+
+function sanitiseAgeChronicleShortText(value, maxLength, fallback = '') {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim()
+  const safeText = text.slice(0, maxLength)
+  return safeText === '' ? fallback : safeText
+}
+
+function sanitiseAgeChronicleLongText(value, maxLength) {
+  return String(value ?? '').trim().slice(0, maxLength)
+}
+
+function normaliseAgeChronicleNumber(value, fallback = 0) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function resolveAgeChronicleNextIndex(value, prefix, ids, fallback) {
+  const customIndex = ids.reduce((maxValue, id) => {
+    if (!id.startsWith(prefix)) {
+      return maxValue
+    }
+
+    const parsed = Number.parseInt(id.slice(prefix.length), 10)
+    return Number.isFinite(parsed) ? Math.max(maxValue, parsed) : maxValue
+  }, fallback)
+
+  const candidate = Number(value)
+  return Number.isFinite(candidate) ? Math.max(customIndex, candidate) : customIndex
+}
+
+function sanitiseAgeChronicleState(input) {
+  if (!input || typeof input !== 'object') {
+    return null
+  }
+
+  const chronicleEntriesSource = Array.isArray(input.chronicleEntries)
+    ? input.chronicleEntries.slice(0, AGE_CHRONICLE_MAX_CHRONICLE_COUNT)
+    : []
+  const characterProfilesSource = Array.isArray(input.characterProfiles)
+    ? input.characterProfiles.slice(0, AGE_CHRONICLE_MAX_CHARACTER_COUNT)
+    : []
+
+  const chronicleEntries = chronicleEntriesSource.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') {
+      return []
+    }
+
+    const year = normaliseAgeChronicleNumber(entry.year, index)
+    const id = sanitiseAgeChronicleShortText(entry.id, 96, `chronicle_${index + 1}`)
+    const label = sanitiseAgeChronicleShortText(
+      entry.label,
+      AGE_CHRONICLE_MAX_LABEL_LENGTH,
+      `新编年 ${year}`,
+    )
+
+    return [
+      {
+        id,
+        label,
+        note: sanitiseAgeChronicleLongText(entry.note, AGE_CHRONICLE_MAX_NOTE_LENGTH),
+        year,
+      },
+    ]
+  })
+
+  const characterProfiles = characterProfilesSource.flatMap((profile, index) => {
+    if (!profile || typeof profile !== 'object') {
+      return []
+    }
+
+    const id = sanitiseAgeChronicleShortText(profile.id, 96, `char_${index + 1}`)
+    return [
+      {
+        anchorAge: Math.max(0, normaliseAgeChronicleNumber(profile.anchorAge, 0)),
+        anchorYear: normaliseAgeChronicleNumber(profile.anchorYear, 0),
+        color: sanitiseAgeChronicleShortText(profile.color, AGE_CHRONICLE_MAX_COLOR_LENGTH, '#a46245'),
+        id,
+        name: sanitiseAgeChronicleShortText(
+          profile.name,
+          AGE_CHRONICLE_MAX_CHARACTER_DISPLAY_NAME_LENGTH,
+          '未命名角色',
+        ),
+      },
+    ]
+  })
+
+  const validEntryIds = new Set(chronicleEntries.map((entry) => entry.id))
+  const validProfileIds = new Set(characterProfiles.map((profile) => profile.id))
+  const hiddenCharacterIds = Array.isArray(input.hiddenCharacterIds)
+    ? input.hiddenCharacterIds.flatMap((profileId) =>
+        typeof profileId === 'string' && validProfileIds.has(profileId) ? [profileId] : [],
+      )
+    : []
+
+  const cellDescriptions = {}
+
+  if (input.cellDescriptions && typeof input.cellDescriptions === 'object') {
+    for (const [key, value] of Object.entries(input.cellDescriptions)) {
+      if (typeof value !== 'string') {
+        continue
+      }
+
+      const [profileId, entryId] = key.split('::')
+
+      if (!validProfileIds.has(profileId) || !validEntryIds.has(entryId)) {
+        continue
+      }
+
+      const description = sanitiseAgeChronicleLongText(value, AGE_CHRONICLE_MAX_CELL_DESCRIPTION_LENGTH)
+
+      if (description !== '') {
+        cellDescriptions[`${profileId}::${entryId}`] = description
+      }
+    }
+  }
+
+  return {
+    cellDescriptions,
+    characterProfiles,
+    chronicleEntries,
+    hiddenCharacterIds,
+    nextCharacterIndex: resolveAgeChronicleNextIndex(
+      input.nextCharacterIndex,
+      'char_custom_',
+      characterProfiles.map((profile) => profile.id),
+      characterProfiles.length,
+    ),
+    nextChronicleIndex: resolveAgeChronicleNextIndex(
+      input.nextChronicleIndex,
+      'chronicle_custom_',
+      chronicleEntries.map((entry) => entry.id),
+      chronicleEntries.length,
+    ),
+  }
 }
 
 function normaliseAvatarDataUrl(value) {
@@ -1436,9 +1686,14 @@ function serialiseMessage(row) {
   return {
     body: row.body,
     createdAt: row.createdAt,
+    deletedAt: row.deletedAt ?? null,
+    deletedByUserId: row.deletedByUserId ?? null,
     id: row.id,
     kind: row.kind,
     nickname: row.nickname,
+    replyToBody: row.replyToBody ?? null,
+    replyToMessageId: row.replyToMessageId ?? null,
+    replyToSpeakerName: row.replyToSpeakerName ?? null,
     roomId: row.roomId,
     sequence: row.sequence,
     sessionId: row.sessionId ?? null,
@@ -1448,6 +1703,17 @@ function serialiseMessage(row) {
     speakerDisplayMode: normalisePresentationMode(row.speakerDisplayMode),
     speakerName: row.speakerName ?? row.nickname,
   }
+}
+
+function getMessageById(messageId) {
+  const safeMessageId = String(messageId ?? '').trim()
+
+  if (safeMessageId === '') {
+    return null
+  }
+
+  const row = statementSelectMessageById.get(safeMessageId)
+  return row ? serialiseMessage(row) : null
 }
 
 function serialiseUser(row) {
@@ -1494,6 +1760,22 @@ function serialiseRoom(row) {
 
 function isAdminUser(userId) {
   return getCurrentUser(userId)?.role === 'admin'
+}
+
+function canRevokeMessage(message, state) {
+  if (!message || message.deletedAt !== null) {
+    return false
+  }
+
+  if (state.userId !== '' && isAdminUser(state.userId)) {
+    return true
+  }
+
+  if (state.userId !== '' && message.userId === state.userId) {
+    return true
+  }
+
+  return state.sessionId !== '' && message.sessionId === state.sessionId
 }
 
 function getRoomList() {
@@ -1872,6 +2154,11 @@ function persistMessage({
   nickname,
   kind,
   body,
+  deletedAt = null,
+  deletedByUserId = null,
+  replyToBody = null,
+  replyToMessageId = null,
+  replyToSpeakerName = null,
   speakerAvatarDataUrl = null,
   speakerCharacterId = null,
   speakerDisplayMode = CHAT_PRESENTATION_BUBBLE,
@@ -1889,6 +2176,11 @@ function persistMessage({
     speakerAvatarDataUrl,
     speakerCharacterId,
     speakerDisplayMode,
+    replyToMessageId,
+    replyToSpeakerName,
+    replyToBody,
+    deletedAt,
+    deletedByUserId,
     speakerName,
     kind,
     body,
@@ -1898,9 +2190,14 @@ function persistMessage({
   return {
     body,
     createdAt,
+    deletedAt,
+    deletedByUserId,
     id: messageId,
     kind,
     nickname,
+    replyToBody,
+    replyToMessageId,
+    replyToSpeakerName,
     roomId,
     sequence: Number(result.lastInsertRowid),
     sessionId,
@@ -2551,11 +2848,25 @@ function handleChatMessage(state, socket, payload) {
   }
 
   const speakerSnapshot = resolveActiveSpeakerSnapshot(state)
+  const replySourceMessage = getMessageById(payload.replyToMessageId)
+  const replyToMessageId =
+    replySourceMessage && replySourceMessage.roomId === state.roomId ? replySourceMessage.id : null
+  const replyToSpeakerName =
+    replyToMessageId !== null
+      ? replySourceMessage.speakerName.trim() || replySourceMessage.nickname
+      : null
+  const replyToBody =
+    replyToMessageId !== null
+      ? buildReplyPreviewBody(replySourceMessage.deletedAt === null ? replySourceMessage.body : '该消息已撤回')
+      : null
 
   const message = persistMessage({
     body,
     kind: 'user',
     nickname: state.nickname,
+    replyToBody,
+    replyToMessageId,
+    replyToSpeakerName,
     roomId: state.roomId,
     sessionId: state.sessionId,
     userId: state.userId,
@@ -2567,6 +2878,60 @@ function handleChatMessage(state, socket, payload) {
     type: 'message',
   })
   broadcastRooms()
+}
+
+function handleRevokeMessage(state, socket, payload) {
+  if (!state.joined) {
+    sendJson(socket, {
+      message: '请先加入群聊。',
+      type: 'error',
+    })
+    return
+  }
+
+  const message = getMessageById(payload.messageId)
+
+  if (!message || message.roomId !== state.roomId || message.kind === 'system') {
+    sendJson(socket, {
+      message: '目标消息不存在。',
+      type: 'error',
+    })
+    return
+  }
+
+  if (message.deletedAt !== null) {
+    sendJson(socket, {
+      message: '该消息已经撤回。',
+      type: 'error',
+    })
+    return
+  }
+
+  if (!canRevokeMessage(message, state)) {
+    sendJson(socket, {
+      message: '只有消息发送者或管理员可以撤回这条消息。',
+      type: 'error',
+    })
+    return
+  }
+
+  const deletedAt = Date.now()
+  statementRevokeMessage.run({
+    deletedAt,
+    deletedByUserId: state.userId || null,
+    id: message.id,
+  })
+
+  const nextMessage = {
+    ...message,
+    deletedAt,
+    deletedByUserId: state.userId || null,
+  }
+
+  broadcastToRoom(state.roomId, {
+    message: nextMessage,
+    type: 'message_updated',
+  })
 }
 
 function handleDisconnect(state, socket) {
@@ -2746,38 +3111,155 @@ function handleLogout(request, response) {
   )
 }
 
+function handleAgeChronicleStateGet(request, response, requestUrl) {
+  const headers = appendCorsHeaders(request)
+  const worldviewName = sanitiseAgeChronicleWorldview(requestUrl.searchParams.get('worldview'))
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
+    return
+  }
+
+  const row = statementSelectAgeChronicleState.get(worldviewName)
+
+  if (!row) {
+    writeJson(response, 200, { ok: true, state: null }, { headers })
+    return
+  }
+
+  let state = null
+
+  try {
+    state = sanitiseAgeChronicleState(JSON.parse(row.stateJson))
+  } catch {
+    state = null
+  }
+
+  writeJson(
+    response,
+    200,
+    {
+      ok: true,
+      state,
+      updatedAt: row.updatedAt,
+    },
+    { headers },
+  )
+}
+
+async function handleAgeChronicleStateSave(request, response) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '共享编年保存需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 1024 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '共享编年内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseAgeChronicleWorldview(body?.worldview)
+  const state = sanitiseAgeChronicleState(body?.state)
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
+    return
+  }
+
+  if (!state) {
+    writeJson(response, 400, { message: '共享编年数据无效。', ok: false }, { headers })
+    return
+  }
+
+  const updatedAt = Date.now()
+
+  statementUpsertAgeChronicleState.run({
+    stateJson: JSON.stringify(state),
+    updatedAt,
+    updatedByUserId: authContext.user.id,
+    worldviewName,
+  })
+
+  writeJson(
+    response,
+    200,
+    {
+      ok: true,
+      state,
+      updatedAt,
+    },
+    {
+      headers: authContext.shouldRefreshCookie
+        ? {
+            ...headers,
+            'Set-Cookie': buildSetCookieHeader(
+              request,
+              authContext.sessionToken,
+              Math.floor(AUTH_SESSION_TTL_MS / 1000),
+            ),
+          }
+        : headers,
+    },
+  )
+}
+
 const server = http.createServer((request, response) => {
   const requestUrl = new URL(request.url ?? '/', `http://${getRequestHost(request)}`)
 
-  if (request.method === 'OPTIONS' && requestUrl.pathname.startsWith('/auth/')) {
+  if (
+    request.method === 'OPTIONS' &&
+    requestUrl.pathname.startsWith('/api/')
+  ) {
     writeEmpty(response, 204, { headers: appendCorsHeaders(request) })
     return
   }
 
-  if (request.method === 'POST' && requestUrl.pathname === '/auth/access-key') {
+  if (request.method === 'POST' && requestUrl.pathname === '/api/auth/access-key') {
     void handleAccessKeyLogin(request, response)
     return
   }
 
-  if (request.method === 'GET' && requestUrl.pathname === '/auth/me') {
+  if (request.method === 'GET' && requestUrl.pathname === '/api/auth/me') {
     handleAuthMe(request, response)
     return
   }
 
-  if (request.method === 'POST' && requestUrl.pathname === '/auth/logout') {
+  if (request.method === 'POST' && requestUrl.pathname === '/api/auth/logout') {
     handleLogout(request, response)
+    return
+  }
+
+  if (request.method === 'GET' && requestUrl.pathname === '/api/age-chronicle/state') {
+    handleAgeChronicleStateGet(request, response, requestUrl)
+    return
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/age-chronicle/state') {
+    void handleAgeChronicleStateSave(request, response)
     return
   }
 
   if (requestUrl.pathname === '/') {
     writeJson(response, 200, {
       endpoints: {
-        authAccessKey: '/auth/access-key',
-        authMe: '/auth/me',
-        health: '/health',
+        ageChronicleState: '/api/age-chronicle/state',
+        authAccessKey: '/api/auth/access-key',
+        authMe: '/api/auth/me',
+        health: '/api/health',
         websocket: '/ws',
       },
-      message: '群聊服务正在运行。请通过前端页面访问群聊，或用 /health 检查服务状态。',
+      message: '群聊服务正在运行。请通过前端页面访问群聊，或用 /api/health 检查服务状态。',
       ok: true,
       roomId: PUBLIC_ROOM.id,
       roomCount: statementCountRooms.get().count,
@@ -2785,7 +3267,7 @@ const server = http.createServer((request, response) => {
     return
   }
 
-  if (requestUrl.pathname === '/health') {
+  if (requestUrl.pathname === '/api/health') {
     writeJson(response, 200, {
       ok: true,
       roomCount: statementCountRooms.get().count,
@@ -2846,6 +3328,11 @@ websocketServer.on('connection', (socket, request) => {
 
     if (payload.type === 'send_message') {
       handleChatMessage(state, socket, payload)
+      return
+    }
+
+    if (payload.type === 'revoke_message') {
+      handleRevokeMessage(state, socket, payload)
       return
     }
 

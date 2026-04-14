@@ -45,9 +45,14 @@ export interface ChatCharacterCard {
 export interface ChatMessage {
   body: string
   createdAt: number
+  deletedAt: number | null
+  deletedByUserId: string | null
   id: string
   kind: ChatMessageKind
   nickname: string
+  replyToBody: string | null
+  replyToMessageId: string | null
+  replyToSpeakerName: string | null
   roomId: string
   sequence: number
   sessionId: string | null
@@ -91,10 +96,13 @@ export function buildChatWebSocketUrl(): string {
 
 export function buildChatHttpUrl(pathname: string): string {
   const safePathname = pathname.startsWith('/') ? pathname : `/${pathname}`
+  const apiPathname = safePathname.startsWith('/api/') ? safePathname : `/api${safePathname}`
   const explicitBase = import.meta.env.VITE_CHAT_HTTP_URL?.trim()
 
   if (explicitBase) {
-    return `${explicitBase.replace(/\/+$/, '')}${safePathname}`
+    const normalizedBase = explicitBase.replace(/\/+$/, '')
+    const requestPath = /\/api$/i.test(normalizedBase) ? safePathname : apiPathname
+    return `${normalizedBase}${requestPath}`
   }
 
   const protocol = window.location.protocol
@@ -102,10 +110,10 @@ export function buildChatHttpUrl(pathname: string): string {
 
   if (import.meta.env.DEV) {
     const port = import.meta.env.VITE_CHAT_PORT?.trim() || DEFAULT_CHAT_PORT
-    return `${protocol}//${host}:${port}${safePathname}`
+    return `${protocol}//${host}:${port}${apiPathname}`
   }
 
-  return `${window.location.origin}${safePathname}`
+  return `${window.location.origin}${apiPathname}`
 }
 
 export function createChatSessionId(): string {

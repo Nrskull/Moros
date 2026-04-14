@@ -39,6 +39,11 @@
     type: 'message'
   }
 
+  interface ChatMessageUpdatedPayload {
+    message: ChatMessage
+    type: 'message_updated'
+  }
+
   interface ChatPresencePayload {
     members: ChatMember[]
     roomId: string
@@ -114,6 +119,7 @@
     | ChatErrorPayload
     | ChatJoinedPayload
     | ChatMessagePayload
+    | ChatMessageUpdatedPayload
     | ChatPresencePayload
     | ChatRoomHistoryClearedPayload
     | ChatRoomPermissionsStatePayload
@@ -154,6 +160,8 @@
   const AVATAR_CROP_OUTPUT_SIZE = 320
 
   let characterMenuElement: HTMLDivElement | null = null
+  let composerTextareaElement: HTMLTextAreaElement | null = null
+  let messageActionMenuElement: HTMLDivElement | null = null
   let messageViewportElement: HTMLDivElement | null = null
 
   let socket: WebSocket | null = null
@@ -180,6 +188,7 @@
   let members: ChatMember[] = []
   let manageableUsers: ChatUser[] = []
   let roomPermissions: ChatRoomPermission[] = []
+  let replyTarget: ChatMessage | null = null
   let unreadIncomingCount = 0
   let isAuthPromptOpen = false
   let isCreateRoomPromptOpen = false
@@ -228,6 +237,12 @@
   let roomList: ChatRoom[] = [ROOM_PLACEHOLDER]
   let activeCharacter: ChatCharacterCard | null = null
   let renderedMessages: ChatRenderItem[] = []
+  let messageActionMenuMessage: ChatMessage | null = null
+  let messageActionMenuX = 0
+  let messageActionMenuY = 0
+  let messageLongPressTimer: number | null = null
+  let messageLongPressStartX = 0
+  let messageLongPressStartY = 0
 
   $: avatarCropViewportSize =
     avatarCropSurfaceWidth > 0 ? avatarCropSurfaceWidth : AVATAR_CROP_VIEWPORT_SIZE
@@ -677,8 +692,153 @@
     return message.speakerDisplayMode === 'kp-narration' ? 'kp-narration' : 'bubble'
   }
 
+  function isMessageRevoked(message: ChatMessage): boolean {
+    return message.deletedAt !== null
+  }
+
+  function getMessageBubbleBody(message: ChatMessage): string {
+    return isMessageRevoked(message) ? '该消息已撤回' : message.body
+  }
+
+  function getMessageReplySpeakerName(message: ChatMessage): string {
+    return message.replyToSpeakerName?.trim() || '引用消息'
+  }
+
+  function getMessageReplyPreviewBody(message: ChatMessage): string {
+    return message.replyToBody?.trim() || '该消息已撤回'
+  }
+
+  function hasMessageReplyPreview(message: ChatMessage): boolean {
+    return message.replyToMessageId !== null
+  }
+
+  function canRevokeMessage(message: ChatMessage): boolean {
+    if (isMessageRevoked(message)) {
+      return false
+    }
+
+    return isAdminUser || isOwnMessage(message)
+  }
+
   function getSpeakerInitial(name: string): string {
     return name.trim().charAt(0) || '角'
+  }
+
+  function clearMessageLongPressTimer(): void {
+    if (messageLongPressTimer === null) {
+      return
+    }
+
+    window.clearTimeout(messageLongPressTimer)
+    messageLongPressTimer = null
+  }
+
+  function closeMessageActionMenu(): void {
+    clearMessageLongPressTimer()
+    messageActionMenuMessage = null
+  }
+
+  function openMessageActionMenu(message: ChatMessage, clientX: number, clientY: number): void {
+    clearMessageLongPressTimer()
+    const canRevoke = canRevokeMessage(message)
+    const menuWidth = 180
+    const menuHeight = canRevoke ? 104 : 60
+    messageActionMenuMessage = message
+    messageActionMenuX = Math.max(12, Math.min(clientX, window.innerWidth - menuWidth - 12))
+    messageActionMenuY = Math.max(12, Math.min(clientY, window.innerHeight - menuHeight - 12))
+  }
+
+  function focusComposer(): void {
+    composerTextareaElement?.focus()
+  }
+
+  function quoteReplyToMessage(message: ChatMessage): void {
+    replyTarget = message
+    closeMessageActionMenu()
+    requestAnimationFrame(() => {
+      focusComposer()
+    })
+  }
+
+  function clearReplyTarget(): void {
+    replyTarget = null
+  }
+
+  function handleMessageBubbleContextMenu(message: ChatMessage, event: MouseEvent): void {
+    event.preventDefault()
+    openMessageActionMenu(message, event.clientX, event.clientY)
+  }
+
+  function handleMessageBubblePointerDown(message: ChatMessage, event: PointerEvent): void {
+    if (event.pointerType !== 'touch') {
+      return
+    }
+
+    clearMessageLongPressTimer()
+    messageLongPressStartX = event.clientX
+    messageLongPressStartY = event.clientY
+    messageLongPressTimer = window.setTimeout(() => {
+      openMessageActionMenu(message, event.clientX, event.clientY)
+    }, 420)
+  }
+
+  function handleMessageBubblePointerMove(event: PointerEvent): void {
+    if (messageLongPressTimer === null) {
+      return
+    }
+
+    if (
+      Math.abs(event.clientX - messageLongPressStartX) > 10 ||
+      Math.abs(event.clientY - messageLongPressStartY) > 10
+    ) {
+      clearMessageLongPressTimer()
+    }
+  }
+
+  function handleMessageBubblePointerEnd(): void {
+    clearMessageLongPressTimer()
+  }
+
+  function syncInteractiveMessageState(message: ChatMessage): void {
+    if (replyTarget?.id === message.id) {
+      replyTarget = message
+    }
+
+    if (messageActionMenuMessage?.id === message.id) {
+      if (isMessageRevoked(message) || !canRevokeMessage(message)) {
+        closeMessageActionMenu()
+      } else {
+        messageActionMenuMessage = message
+      }
+    }
+  }
+
+  function revokeMessage(message: ChatMessage): void {
+    if (!canRevokeMessage(message)) {
+      closeMessageActionMenu()
+      return
+    }
+
+    const confirmed = window.confirm('确定要撤回这条消息吗？')
+
+    if (!confirmed) {
+      return
+    }
+
+    if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
+      connectionError = '当前未连接群聊，无法撤回消息。'
+      closeMessageActionMenu()
+      return
+    }
+
+    socket.send(
+      JSON.stringify({
+        messageId: message.id,
+        type: 'revoke_message',
+      }),
+    )
+
+    closeMessageActionMenu()
   }
 
   function syncMessageIndent(node: HTMLElement): void {
