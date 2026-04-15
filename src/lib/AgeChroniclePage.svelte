@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onMount } from 'svelte'
   import { slide } from 'svelte/transition'
   import WorldviewHero from './WorldviewHero.svelte'
   import {
@@ -9,6 +9,7 @@
     sampleChronicleEntries,
     type CharacterAgeProfile,
     type ChronicleEntry,
+    type ChronicleVisibility,
   } from './age-chronicle'
   import { buildChatHttpUrl, type ChatUser } from './chat-room'
 
@@ -22,64 +23,96 @@
   const colorPool = ['#a46245', '#4d7b95', '#7c6497', '#5a8b64', '#b06f8d', '#9a7a42']
   const CREATE_CHRONICLE_PANEL_ID = 'create'
   const DEFAULT_CHRONICLE_NOTE = '补充这一节点的事件背景或阶段说明。'
-  const AGE_CHRONICLE_STORAGE_KEY_PREFIX = 'morosonder:age-chronicle:v1'
   const AGE_CELL_DESCRIPTION_PLACEHOLDER = '记录这一年的状态、事件或身份变化。'
-  const AGE_CHRONICLE_SAVE_DEBOUNCE_MS = 450
+  const AGE_CHRONICLE_CACHE_KEY_PREFIX = 'morosonder:age-chronicle:cache:v2'
+  const AGE_CHRONICLE_VIEW_KEY_PREFIX = 'morosonder:age-chronicle:view:v2'
 
-  interface StoredAgeChronicleState {
-    cellDescriptions: Record<string, string>
+  interface AgeChronicleCapabilities {
+    canCreateEntry: boolean
+    canEditOwnCellNote: boolean
+    canEditSharedStructure: boolean
+    canManageEntry: boolean
+  }
+
+  interface AgeChronicleAdminCellNote {
+    authorDisplayName: string
+    authorUserId: string
+    body: string
+    updatedAt: number
+  }
+
+  interface AgeChronicleServerState {
+    adminCellNotes: Record<string, AgeChronicleAdminCellNote[]>
     characterProfiles: CharacterAgeProfile[]
     chronicleEntries: ChronicleEntry[]
-    hiddenCharacterIds: string[]
     nextCharacterIndex: number
-    nextChronicleIndex: number
+    ownCellDescriptions: Record<string, string>
+  }
+
+  interface AgeChronicleCachedState {
+    state: AgeChronicleServerState
+    updatedAt: number
+  }
+
+  interface AgeChronicleViewPreferences {
+    hiddenCharacterIds: string[]
   }
 
   interface AgeChronicleApiResponse {
     authenticated?: boolean
+    capabilities?: Partial<AgeChronicleCapabilities>
     currentUser?: ChatUser
     message?: string
     ok: boolean
-    state?: StoredAgeChronicleState | null
+    state?: unknown
     updatedAt?: number
   }
 
-  let nextCharacterIndex = sampleCharacterProfiles.length
-  let nextChronicleIndex = sampleChronicleEntries.length
-
   let chronicleAccordionElement: HTMLDivElement | null = null
   let draggedCharacterId = ''
-  let loadedWorldviewStorageKey = ''
-  let isStorageHydrated = false
   let currentUser: ChatUser | null = null
+  let capabilities = createEmptyCapabilities()
+  let isStateLoading = true
+  let isReadOnlyFallback = false
+  let sharedSyncError = ''
   let accessKeyDraft = ''
   let authError = ''
   let isAuthChecking = false
   let isAuthPromptOpen = false
-  let sharedSyncTimer: ReturnType<typeof setTimeout> | null = null
-  let isSharedStateLoaded = false
-  let isApplyingSharedState = false
-  let lastSharedStateSnapshot = ''
-  let sharedSyncError = ''
-  let isCellDescriptionPromptOpen = false
-  let activeDescriptionProfileId = ''
-  let activeDescriptionEntryId = ''
-  let activeCellDescriptionDraft = ''
+  let isSavingStructure = false
+  let entryMutationTargetId = ''
+  let isSavingCellNote = false
+  let loadedWorldviewName = ''
+  let loadedViewPreferenceKey = ''
 
-  let chronicleEntries: ChronicleEntry[] = sampleChronicleEntries.map((entry) => ({ ...entry }))
-  let characterProfiles: CharacterAgeProfile[] = sampleCharacterProfiles.map((profile) => ({ ...profile }))
+  let chronicleEntries: ChronicleEntry[] = cloneChronicleEntries(sampleChronicleEntries)
+  let characterProfiles: CharacterAgeProfile[] = cloneCharacterProfiles(sampleCharacterProfiles)
   let hiddenCharacterIds: string[] = []
-  let cellDescriptions: Record<string, string> = {}
+  let ownCellDescriptions: Record<string, string> = {}
+  let adminCellNotes: Record<string, AgeChronicleAdminCellNote[]> = {}
+  let nextCharacterIndex = sampleCharacterProfiles.length
 
   let activeChroniclePanelId = CREATE_CHRONICLE_PANEL_ID
   let draftChronicleYear = getNextChronicleYear(sampleChronicleEntries)
   let draftChronicleLabel = `新编年 ${draftChronicleYear}`
   let draftChronicleNote = DEFAULT_CHRONICLE_NOTE
+  let draftChronicleVisibility: ChronicleVisibility = 'private'
+
+  let entryDraftLabel = ''
+  let entryDraftYear = 0
+  let entryDraftNote = ''
+  let entryDraftVisibility: ChronicleVisibility = 'private'
 
   let draftCharacterName = `新角色 ${nextCharacterIndex + 1}`
   let draftCharacterAnchorYear = sampleChronicleEntries[0]?.year ?? 0
   let draftCharacterAnchorAge = 16
   let draftCharacterColor = colorPool[nextCharacterIndex % colorPool.length]
+
+  let isCellDescriptionPromptOpen = false
+  let activeDescriptionProfileId = ''
+  let activeDescriptionEntryId = ''
+  let activeCellDescriptionDraft = ''
+  let cellDescriptionError = ''
 
   $: sortedChronicleEntries = [...chronicleEntries].sort((left, right) => {
     if (left.year !== right.year) {
@@ -92,14 +125,51 @@
   $: visibleCharacterProfiles = characterProfiles.filter(
     (profile) => !hiddenCharacterIds.includes(profile.id),
   )
+
   $: activeDescriptionProfile =
     activeDescriptionProfileId === ''
       ? null
       : characterProfiles.find((profile) => profile.id === activeDescriptionProfileId) ?? null
+
   $: activeDescriptionEntry =
     activeDescriptionEntryId === ''
       ? null
       : chronicleEntries.find((entry) => entry.id === activeDescriptionEntryId) ?? null
+
+  $: activeDescriptionKey =
+    activeDescriptionProfileId !== '' && activeDescriptionEntryId !== ''
+      ? createAgeCellDescriptionKey(activeDescriptionProfileId, activeDescriptionEntryId)
+      : ''
+
+  $: activeAdminCellNoteList =
+    activeDescriptionKey === ''
+      ? []
+      : [...(adminCellNotes[activeDescriptionKey] ?? [])].sort(
+          (left, right) => right.updatedAt - left.updatedAt,
+        )
+
+  $: canCreateChronicleEntry = !isReadOnlyFallback && capabilities.canCreateEntry
+  $: canManageChronicleEntries = !isReadOnlyFallback && capabilities.canManageEntry
+  $: canEditSharedStructure = !isReadOnlyFallback && capabilities.canEditSharedStructure
+  $: canEditOwnCellNote = !isReadOnlyFallback && capabilities.canEditOwnCellNote
+  $: isAdminCurrentUser = currentUser?.role === 'admin'
+
+  $: if (loadedViewPreferenceKey !== '') {
+    loadedViewPreferenceKey
+    hiddenCharacterIds
+    persistViewPreferences()
+  }
+
+  $: if (loadedWorldviewName !== '' && loadedWorldviewName !== worldviewName && !isStateLoading) {
+    void loadSharedAgeChronicleState(worldviewName)
+  }
+
+  $: if (
+    isCellDescriptionPromptOpen &&
+    (activeDescriptionProfile === null || activeDescriptionEntry === null)
+  ) {
+    closeCellDescriptionPrompt()
+  }
 
   function cloneChronicleEntries(entries: ChronicleEntry[]): ChronicleEntry[] {
     return entries.map((entry) => ({ ...entry }))
@@ -107,6 +177,26 @@
 
   function cloneCharacterProfiles(profiles: CharacterAgeProfile[]): CharacterAgeProfile[] {
     return profiles.map((profile) => ({ ...profile }))
+  }
+
+  function cloneAdminCellNotes(
+    notes: Record<string, AgeChronicleAdminCellNote[]>,
+  ): Record<string, AgeChronicleAdminCellNote[]> {
+    return Object.fromEntries(
+      Object.entries(notes).map(([key, value]) => [
+        key,
+        value.map((note) => ({ ...note })),
+      ]),
+    )
+  }
+
+  function createEmptyCapabilities(): AgeChronicleCapabilities {
+    return {
+      canCreateEntry: false,
+      canEditOwnCellNote: false,
+      canEditSharedStructure: false,
+      canManageEntry: false,
+    }
   }
 
   function createAgeCellDescriptionKey(profileId: string, entryId: string): string {
@@ -126,12 +216,24 @@
     return safeName === '' ? '未分类世界观' : safeName
   }
 
-  function getAgeChronicleStorageKey(targetWorldview = worldviewName): string {
-    return `${AGE_CHRONICLE_STORAGE_KEY_PREFIX}:${normaliseWorldviewStorageName(targetWorldview)}`
+  function getViewerStorageSegment(): string {
+    return currentUser?.id?.trim() || 'guest'
+  }
+
+  function getAgeChronicleCacheKey(targetWorldview = worldviewName): string {
+    return `${AGE_CHRONICLE_CACHE_KEY_PREFIX}:${normaliseWorldviewStorageName(targetWorldview)}:${getViewerStorageSegment()}`
+  }
+
+  function getAgeChronicleViewPreferenceKey(targetWorldview = worldviewName): string {
+    return `${AGE_CHRONICLE_VIEW_KEY_PREFIX}:${normaliseWorldviewStorageName(targetWorldview)}:${getViewerStorageSegment()}`
   }
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null
+  }
+
+  function normaliseChronicleVisibility(value: unknown): ChronicleVisibility {
+    return value === 'public' ? 'public' : 'private'
   }
 
   function sanitiseChronicleEntries(input: unknown): ChronicleEntry[] {
@@ -139,31 +241,40 @@
       return cloneChronicleEntries(sampleChronicleEntries)
     }
 
-    const entries = input.flatMap((entry): ChronicleEntry[] => {
+    return input.flatMap((entry): ChronicleEntry[] => {
       if (!isRecord(entry)) {
         return []
       }
 
       const id = typeof entry.id === 'string' ? entry.id.trim() : ''
-      const label = typeof entry.label === 'string' ? entry.label : ''
-      const note = typeof entry.note === 'string' ? entry.note : ''
       const year = Number(entry.year)
 
       if (id === '' || !Number.isFinite(year)) {
         return []
       }
 
+      const createdAt = Number(entry.createdAt)
+      const updatedAt = Number(entry.updatedAt)
+      const label = typeof entry.label === 'string' ? entry.label.trim() : ''
+      const note = typeof entry.note === 'string' ? entry.note : ''
+      const createdByUserId =
+        typeof entry.createdByUserId === 'string' && entry.createdByUserId.trim() !== ''
+          ? entry.createdByUserId.trim()
+          : null
+
       return [
         {
+          createdAt: Number.isFinite(createdAt) ? createdAt : 0,
+          createdByUserId,
           id,
-          label: label.trim() || `新编年 ${year}`,
+          label: label === '' ? `新编年 ${year}` : label,
           note,
+          updatedAt: Number.isFinite(updatedAt) ? updatedAt : Number.isFinite(createdAt) ? createdAt : 0,
+          visibility: normaliseChronicleVisibility(entry.visibility),
           year,
         },
       ]
     })
-
-    return entries.length > 0 ? entries : cloneChronicleEntries(sampleChronicleEntries)
   }
 
   function sanitiseCharacterProfiles(input: unknown): CharacterAgeProfile[] {
@@ -171,7 +282,7 @@
       return cloneCharacterProfiles(sampleCharacterProfiles)
     }
 
-    const profiles = input.flatMap((profile): CharacterAgeProfile[] => {
+    return input.flatMap((profile): CharacterAgeProfile[] => {
       if (!isRecord(profile)) {
         return []
       }
@@ -188,16 +299,14 @@
 
       return [
         {
-          id,
           anchorAge: Math.max(0, anchorAge),
           anchorYear,
           color: color.trim() || colorPool[0],
+          id,
           name: name.trim() || '未命名角色',
         },
       ]
     })
-
-    return profiles.length > 0 ? profiles : cloneCharacterProfiles(sampleCharacterProfiles)
   }
 
   function sanitiseHiddenCharacterIds(input: unknown, profiles: CharacterAgeProfile[]): string[] {
@@ -211,7 +320,7 @@
     )
   }
 
-  function sanitiseCellDescriptions(
+  function sanitiseOwnCellDescriptions(
     input: unknown,
     profiles: CharacterAgeProfile[],
     entries: ChronicleEntry[],
@@ -224,7 +333,7 @@
     const validEntryIds = new Set(entries.map((entry) => entry.id))
 
     return Object.entries(input).reduce<Record<string, string>>((map, [key, value]) => {
-      if (typeof value !== 'string') {
+      if (typeof value !== 'string' || value.trim() === '') {
         return map
       }
 
@@ -234,13 +343,69 @@
         return map
       }
 
-      if (value.trim() === '') {
-        return map
-      }
-
       map[key] = value
       return map
     }, {})
+  }
+
+  function sanitiseAdminCellNotes(
+    input: unknown,
+    profiles: CharacterAgeProfile[],
+    entries: ChronicleEntry[],
+  ): Record<string, AgeChronicleAdminCellNote[]> {
+    if (!isRecord(input)) {
+      return {}
+    }
+
+    const validProfileIds = new Set(profiles.map((profile) => profile.id))
+    const validEntryIds = new Set(entries.map((entry) => entry.id))
+
+    return Object.entries(input).reduce<Record<string, AgeChronicleAdminCellNote[]>>(
+      (map, [key, value]) => {
+        if (!Array.isArray(value)) {
+          return map
+        }
+
+        const [profileId, entryId] = key.split('::')
+
+        if (!validProfileIds.has(profileId) || !validEntryIds.has(entryId)) {
+          return map
+        }
+
+        const notes = value.flatMap((item): AgeChronicleAdminCellNote[] => {
+          if (!isRecord(item)) {
+            return []
+          }
+
+          const authorUserId = typeof item.authorUserId === 'string' ? item.authorUserId.trim() : ''
+          const body = typeof item.body === 'string' ? item.body : ''
+          const updatedAt = Number(item.updatedAt)
+
+          if (authorUserId === '' || body.trim() === '' || !Number.isFinite(updatedAt)) {
+            return []
+          }
+
+          return [
+            {
+              authorDisplayName:
+                typeof item.authorDisplayName === 'string' && item.authorDisplayName.trim() !== ''
+                  ? item.authorDisplayName.trim()
+                  : '未知用户',
+              authorUserId,
+              body,
+              updatedAt,
+            },
+          ]
+        })
+
+        if (notes.length > 0) {
+          map[key] = notes
+        }
+
+        return map
+      },
+      {},
+    )
   }
 
   function resolveNextStoredIndex(
@@ -262,19 +427,69 @@
     return Number.isFinite(candidate) ? Math.max(customIndex, candidate) : customIndex
   }
 
-  function createDefaultStoredState(): StoredAgeChronicleState {
+  function sanitiseAgeChronicleCapabilities(input: unknown): AgeChronicleCapabilities {
+    if (!isRecord(input)) {
+      return createEmptyCapabilities()
+    }
+
     return {
-      cellDescriptions: {},
-      characterProfiles: cloneCharacterProfiles(sampleCharacterProfiles),
-      chronicleEntries: cloneChronicleEntries(sampleChronicleEntries),
-      hiddenCharacterIds: [],
-      nextCharacterIndex: sampleCharacterProfiles.length,
-      nextChronicleIndex: sampleChronicleEntries.length,
+      canCreateEntry: input.canCreateEntry === true,
+      canEditOwnCellNote: input.canEditOwnCellNote === true,
+      canEditSharedStructure: input.canEditSharedStructure === true,
+      canManageEntry: input.canManageEntry === true,
     }
   }
 
-  function sanitiseStoredAgeChronicleState(input: unknown): StoredAgeChronicleState | null {
+  function sanitiseAgeChronicleServerState(input: unknown): AgeChronicleServerState | null {
     if (!isRecord(input)) {
+      return null
+    }
+
+    if (!Array.isArray(input.chronicleEntries) || !Array.isArray(input.characterProfiles)) {
+      return null
+    }
+
+    const nextChronicleEntries = sanitiseChronicleEntries(input.chronicleEntries)
+    const nextCharacterProfiles = sanitiseCharacterProfiles(input.characterProfiles)
+
+    if (nextChronicleEntries.length === 0 && nextCharacterProfiles.length === 0) {
+      return {
+        adminCellNotes: {},
+        characterProfiles: [],
+        chronicleEntries: [],
+        nextCharacterIndex: 0,
+        ownCellDescriptions: {},
+      }
+    }
+
+    return {
+      adminCellNotes: sanitiseAdminCellNotes(
+        input.adminCellNotes,
+        nextCharacterProfiles,
+        nextChronicleEntries,
+      ),
+      characterProfiles: nextCharacterProfiles,
+      chronicleEntries: nextChronicleEntries,
+      nextCharacterIndex: resolveNextStoredIndex(
+        input.nextCharacterIndex,
+        'char_custom_',
+        nextCharacterProfiles.map((profile) => profile.id),
+        nextCharacterProfiles.length,
+      ),
+      ownCellDescriptions: sanitiseOwnCellDescriptions(
+        input.ownCellDescriptions,
+        nextCharacterProfiles,
+        nextChronicleEntries,
+      ),
+    }
+  }
+
+  function extractCompatAgeChronicleState(input: unknown): AgeChronicleServerState | null {
+    if (!isRecord(input)) {
+      return null
+    }
+
+    if (!Array.isArray(input.chronicleEntries) || !Array.isArray(input.characterProfiles)) {
       return null
     }
 
@@ -282,30 +497,34 @@
     const nextCharacterProfiles = sanitiseCharacterProfiles(input.characterProfiles)
 
     return {
-      cellDescriptions: sanitiseCellDescriptions(
-        input.cellDescriptions,
-        nextCharacterProfiles,
-        nextChronicleEntries,
-      ),
+      adminCellNotes: {},
       characterProfiles: nextCharacterProfiles,
       chronicleEntries: nextChronicleEntries,
-      hiddenCharacterIds: sanitiseHiddenCharacterIds(input.hiddenCharacterIds, nextCharacterProfiles),
       nextCharacterIndex: resolveNextStoredIndex(
         input.nextCharacterIndex,
         'char_custom_',
         nextCharacterProfiles.map((profile) => profile.id),
-        sampleCharacterProfiles.length,
+        nextCharacterProfiles.length,
       ),
-      nextChronicleIndex: resolveNextStoredIndex(
-        input.nextChronicleIndex,
-        'chronicle_custom_',
-        nextChronicleEntries.map((entry) => entry.id),
-        sampleChronicleEntries.length,
+      ownCellDescriptions: sanitiseOwnCellDescriptions(
+        input.cellDescriptions,
+        nextCharacterProfiles,
+        nextChronicleEntries,
       ),
     }
   }
 
-  function readStoredAgeChronicleState(storageKey: string): StoredAgeChronicleState | null {
+  function createDefaultAgeChronicleState(): AgeChronicleServerState {
+    return {
+      adminCellNotes: {},
+      characterProfiles: cloneCharacterProfiles(sampleCharacterProfiles),
+      chronicleEntries: cloneChronicleEntries(sampleChronicleEntries),
+      nextCharacterIndex: sampleCharacterProfiles.length,
+      ownCellDescriptions: {},
+    }
+  }
+
+  function readCachedAgeChronicleState(storageKey: string): AgeChronicleCachedState | null {
     if (typeof localStorage === 'undefined') {
       return null
     }
@@ -318,68 +537,206 @@
       }
 
       const parsed = JSON.parse(raw) as unknown
-      return sanitiseStoredAgeChronicleState(parsed)
+
+      if (isRecord(parsed) && 'state' in parsed) {
+        const state = sanitiseAgeChronicleServerState(parsed.state)
+
+        if (!state) {
+          return null
+        }
+
+        return {
+          state,
+          updatedAt: Number.isFinite(Number(parsed.updatedAt)) ? Number(parsed.updatedAt) : 0,
+        }
+      }
+
+      const compatState = extractCompatAgeChronicleState(parsed)
+
+      if (!compatState) {
+        return null
+      }
+
+      return {
+        state: compatState,
+        updatedAt: 0,
+      }
     } catch {
       return null
     }
   }
 
-  function applyStoredAgeChronicleState(state: StoredAgeChronicleState): void {
-    chronicleEntries = cloneChronicleEntries(state.chronicleEntries)
-    characterProfiles = cloneCharacterProfiles(state.characterProfiles)
-    hiddenCharacterIds = [...state.hiddenCharacterIds]
-    cellDescriptions = { ...state.cellDescriptions }
-    nextCharacterIndex = state.nextCharacterIndex
-    nextChronicleIndex = state.nextChronicleIndex
-    activeChroniclePanelId = CREATE_CHRONICLE_PANEL_ID
-    resetChronicleDraft()
-    resetCharacterDraft()
-  }
-
-  function createCurrentStoredAgeChronicleState(): StoredAgeChronicleState {
-    return {
-      cellDescriptions: { ...cellDescriptions },
-      characterProfiles: cloneCharacterProfiles(characterProfiles),
-      chronicleEntries: cloneChronicleEntries(chronicleEntries),
-      hiddenCharacterIds: [...hiddenCharacterIds],
-      nextCharacterIndex,
-      nextChronicleIndex,
-    }
-  }
-
-  function loadAgeChronicleState(targetWorldview = worldviewName): void {
-    const storageKey = getAgeChronicleStorageKey(targetWorldview)
-    const storedState = readStoredAgeChronicleState(storageKey) ?? createDefaultStoredState()
-
-    applyStoredAgeChronicleState(storedState)
-    loadedWorldviewStorageKey = storageKey
-    isStorageHydrated = true
-  }
-
-  function persistAgeChronicleState(): void {
-    if (typeof localStorage === 'undefined' || !isStorageHydrated || loadedWorldviewStorageKey === '') {
+  function writeCachedAgeChronicleState(
+    storageKey: string,
+    state: AgeChronicleServerState,
+    updatedAt: number,
+  ): void {
+    if (typeof localStorage === 'undefined') {
       return
     }
-
-    const payload = createCurrentStoredAgeChronicleState()
 
     try {
-      localStorage.setItem(loadedWorldviewStorageKey, JSON.stringify(payload))
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          state,
+          updatedAt,
+        }),
+      )
     } catch {
-      // Ignore quota or serialisation failures and keep the page usable.
+      // Ignore quota failures and keep the page usable.
     }
   }
 
-  function clearSharedSyncTimer(): void {
-    if (sharedSyncTimer === null) {
+  function readViewPreferences(
+    storageKey: string,
+    profiles: CharacterAgeProfile[],
+  ): AgeChronicleViewPreferences {
+    if (typeof localStorage === 'undefined') {
+      return { hiddenCharacterIds: [] }
+    }
+
+    try {
+      const raw = localStorage.getItem(storageKey)
+
+      if (raw === null) {
+        return { hiddenCharacterIds: [] }
+      }
+
+      const parsed = JSON.parse(raw) as unknown
+
+      if (!isRecord(parsed)) {
+        return { hiddenCharacterIds: [] }
+      }
+
+      return {
+        hiddenCharacterIds: sanitiseHiddenCharacterIds(parsed.hiddenCharacterIds, profiles),
+      }
+    } catch {
+      return { hiddenCharacterIds: [] }
+    }
+  }
+
+  function persistViewPreferences(): void {
+    if (typeof localStorage === 'undefined' || loadedViewPreferenceKey === '') {
       return
     }
 
-    window.clearTimeout(sharedSyncTimer)
-    sharedSyncTimer = null
+    try {
+      localStorage.setItem(
+        loadedViewPreferenceKey,
+        JSON.stringify({
+          hiddenCharacterIds,
+        }),
+      )
+    } catch {
+      // Ignore quota failures and keep the page usable.
+    }
   }
 
-  async function requestAgeChronicleApi(pathname: string, init?: RequestInit): Promise<{
+  function loadViewPreferences(targetWorldview: string, profiles: CharacterAgeProfile[]): void {
+    const storageKey = getAgeChronicleViewPreferenceKey(targetWorldview)
+    const preferences = readViewPreferences(storageKey, profiles)
+    loadedViewPreferenceKey = storageKey
+    hiddenCharacterIds = preferences.hiddenCharacterIds
+  }
+
+  function requestAuthPrompt(message = '共享年龄编年需要先输入访问密钥。'): void {
+    authError = ''
+    sharedSyncError = message
+    isAuthPromptOpen = true
+  }
+
+  function syncCurrentUserFromPayload(payload: AgeChronicleApiResponse): void {
+    if (payload.authenticated === true && payload.currentUser) {
+      currentUser = payload.currentUser
+      return
+    }
+
+    if (payload.authenticated === false) {
+      currentUser = null
+      capabilities = createEmptyCapabilities()
+    }
+  }
+
+  function applyAgeChronicleState(
+    state: AgeChronicleServerState,
+    updatedAt: number,
+    targetWorldview = worldviewName,
+  ): void {
+    chronicleEntries = cloneChronicleEntries(state.chronicleEntries)
+    characterProfiles = cloneCharacterProfiles(state.characterProfiles)
+    ownCellDescriptions = { ...state.ownCellDescriptions }
+    adminCellNotes = cloneAdminCellNotes(state.adminCellNotes)
+    nextCharacterIndex = state.nextCharacterIndex
+    loadedWorldviewName = targetWorldview
+    loadViewPreferences(targetWorldview, state.characterProfiles)
+    hiddenCharacterIds = sanitiseHiddenCharacterIds(hiddenCharacterIds, state.characterProfiles)
+    resetChronicleDraft()
+    resetCharacterDraft()
+
+    if (activeChroniclePanelId !== CREATE_CHRONICLE_PANEL_ID) {
+      const activeEntry = chronicleEntries.find((entry) => entry.id === activeChroniclePanelId)
+
+      if (activeEntry) {
+        primeEntryDraft(activeEntry)
+      } else {
+        activeChroniclePanelId = CREATE_CHRONICLE_PANEL_ID
+      }
+    }
+
+    if (
+      isCellDescriptionPromptOpen &&
+      activeDescriptionProfileId !== '' &&
+      activeDescriptionEntryId !== ''
+    ) {
+      activeCellDescriptionDraft =
+        ownCellDescriptions[createAgeCellDescriptionKey(activeDescriptionProfileId, activeDescriptionEntryId)] ??
+        ''
+    }
+
+    writeCachedAgeChronicleState(getAgeChronicleCacheKey(targetWorldview), state, updatedAt)
+  }
+
+  function applyAgeChronicleResponse(
+    payload: AgeChronicleApiResponse,
+    targetWorldview = worldviewName,
+  ): boolean {
+    syncCurrentUserFromPayload(payload)
+    const state = sanitiseAgeChronicleServerState(payload.state)
+
+    if (!state) {
+      return false
+    }
+
+    capabilities = sanitiseAgeChronicleCapabilities(payload.capabilities)
+    isReadOnlyFallback = false
+    applyAgeChronicleState(state, Number(payload.updatedAt ?? Date.now()), targetWorldview)
+    return true
+  }
+
+  function applyCompatAgeChronicleFallback(
+    payload: AgeChronicleApiResponse,
+    targetWorldview = worldviewName,
+  ): boolean {
+    syncCurrentUserFromPayload(payload)
+    const compatState = extractCompatAgeChronicleState(payload.state)
+
+    if (!compatState) {
+      return false
+    }
+
+    capabilities = createEmptyCapabilities()
+    isReadOnlyFallback = true
+    sharedSyncError = '当前年龄编年服务仍是旧版接口，页面已退回只读兼容模式。'
+    applyAgeChronicleState(compatState, Number(payload.updatedAt ?? 0), targetWorldview)
+    return true
+  }
+
+  async function requestAgeChronicleApi(
+    pathname: string,
+    init?: RequestInit,
+  ): Promise<{
     payload: AgeChronicleApiResponse
     status: number
   }> {
@@ -401,7 +758,7 @@
       payload = (await response.json()) as AgeChronicleApiResponse
     } catch {
       payload = {
-        message: '共享编年服务返回了无法解析的响应。',
+        message: '年龄编年服务返回了无法解析的响应。',
         ok: false,
       }
     }
@@ -420,7 +777,12 @@
 
     try {
       const { payload } = await requestAgeChronicleApi('/auth/me', { method: 'GET' })
-      currentUser = payload.ok && payload.authenticated === true && payload.currentUser ? payload.currentUser : null
+
+      if (payload.ok && payload.authenticated === true && payload.currentUser) {
+        currentUser = payload.currentUser
+      } else {
+        currentUser = null
+      }
     } catch {
       currentUser = null
     } finally {
@@ -456,8 +818,7 @@
       accessKeyDraft = ''
       authError = ''
       isAuthPromptOpen = false
-      sharedSyncError = ''
-      queueSharedStateSync()
+      await loadSharedAgeChronicleState(worldviewName)
     } catch {
       authError = '访问密钥验证失败，请确认聊天服务已启动。'
     } finally {
@@ -466,114 +827,51 @@
   }
 
   async function loadSharedAgeChronicleState(targetWorldview = worldviewName): Promise<void> {
-    const storageKey = getAgeChronicleStorageKey(targetWorldview)
-    const fallbackState = readStoredAgeChronicleState(storageKey) ?? createDefaultStoredState()
-    let nextState = fallbackState
+    const cacheKey = getAgeChronicleCacheKey(targetWorldview)
+    const cachedState = readCachedAgeChronicleState(cacheKey)
 
-    isApplyingSharedState = true
-    clearSharedSyncTimer()
+    isStateLoading = true
+    sharedSyncError = ''
 
     try {
       const requestUrl = `/age-chronicle/state?worldview=${encodeURIComponent(targetWorldview)}`
       const { payload } = await requestAgeChronicleApi(requestUrl, { method: 'GET' })
-      const remoteState = sanitiseStoredAgeChronicleState(payload.state ?? null)
 
-      if (payload.ok) {
-        sharedSyncError = ''
-      }
-
-      if (payload.ok && remoteState) {
-        nextState = remoteState
-      }
-    } catch {
-      sharedSyncError = '共享编年服务暂时不可用，当前显示本地缓存。'
-    }
-
-    applyStoredAgeChronicleState(nextState)
-    loadedWorldviewStorageKey = storageKey
-    isStorageHydrated = true
-    isSharedStateLoaded = true
-    isApplyingSharedState = false
-    lastSharedStateSnapshot = JSON.stringify(createCurrentStoredAgeChronicleState())
-    persistAgeChronicleState()
-  }
-
-  async function saveSharedAgeChronicleState(
-    state = createCurrentStoredAgeChronicleState(),
-    snapshot = JSON.stringify(state),
-  ): Promise<void> {
-    clearSharedSyncTimer()
-
-    if (!isSharedStateLoaded || isApplyingSharedState || snapshot === lastSharedStateSnapshot) {
-      return
-    }
-
-    if (!currentUser) {
-      authError = ''
-      isAuthPromptOpen = true
-      sharedSyncError = '共享保存需要先输入访问密钥。'
-      return
-    }
-
-    try {
-      const { payload, status } = await requestAgeChronicleApi('/age-chronicle/state', {
-        body: JSON.stringify({
-          state,
-          worldview: worldviewName,
-        }),
-        method: 'POST',
-      })
-
-      if (!payload.ok) {
-        if (status === 401) {
-          currentUser = null
-          authError = '共享保存需要先输入访问密钥。'
-          isAuthPromptOpen = true
-          sharedSyncError = authError
-          return
-        }
-
-        sharedSyncError = payload.message ?? '共享编年保存失败。'
+      if (payload.ok && applyAgeChronicleResponse(payload, targetWorldview)) {
         return
       }
 
-      const savedState = sanitiseStoredAgeChronicleState(payload.state ?? state) ?? state
-
-      sharedSyncError = ''
-      lastSharedStateSnapshot = JSON.stringify(savedState)
-
-      if (lastSharedStateSnapshot !== JSON.stringify(createCurrentStoredAgeChronicleState())) {
-        isApplyingSharedState = true
-        applyStoredAgeChronicleState(savedState)
-        isApplyingSharedState = false
-        persistAgeChronicleState()
+      if (applyCompatAgeChronicleFallback(payload, targetWorldview)) {
+        return
       }
+
+      if (cachedState) {
+        capabilities = createEmptyCapabilities()
+        isReadOnlyFallback = true
+        sharedSyncError = payload.message ?? '年龄编年服务暂时不可用，当前显示本地只读缓存。'
+        applyAgeChronicleState(cachedState.state, cachedState.updatedAt, targetWorldview)
+        return
+      }
+
+      capabilities = createEmptyCapabilities()
+      isReadOnlyFallback = true
+      sharedSyncError = payload.message ?? '年龄编年服务暂时不可用，当前显示默认只读内容。'
+      applyAgeChronicleState(createDefaultAgeChronicleState(), 0, targetWorldview)
     } catch {
-      sharedSyncError = '共享编年保存失败，请确认聊天服务已启动。'
+      if (cachedState) {
+        capabilities = createEmptyCapabilities()
+        isReadOnlyFallback = true
+        sharedSyncError = '年龄编年服务暂时不可用，当前显示本地只读缓存。'
+        applyAgeChronicleState(cachedState.state, cachedState.updatedAt, targetWorldview)
+      } else {
+        capabilities = createEmptyCapabilities()
+        isReadOnlyFallback = true
+        sharedSyncError = '年龄编年服务暂时不可用，当前显示默认只读内容。'
+        applyAgeChronicleState(createDefaultAgeChronicleState(), 0, targetWorldview)
+      }
+    } finally {
+      isStateLoading = false
     }
-  }
-
-  function queueSharedStateSync(): void {
-    if (typeof window === 'undefined' || !isStorageHydrated || !isSharedStateLoaded || isApplyingSharedState) {
-      return
-    }
-
-    const state = createCurrentStoredAgeChronicleState()
-    const snapshot = JSON.stringify(state)
-
-    if (snapshot === lastSharedStateSnapshot) {
-      return
-    }
-
-    clearSharedSyncTimer()
-    sharedSyncTimer = window.setTimeout(() => {
-      void saveSharedAgeChronicleState(state, snapshot)
-    }, AGE_CHRONICLE_SAVE_DEBOUNCE_MS)
-  }
-
-  function createChronicleId(): string {
-    nextChronicleIndex += 1
-    return `chronicle_custom_${nextChronicleIndex}`
   }
 
   function createCharacterId(): string {
@@ -598,6 +896,7 @@
     draftChronicleYear = getNextChronicleYear(chronicleEntries)
     draftChronicleLabel = `新编年 ${draftChronicleYear}`
     draftChronicleNote = DEFAULT_CHRONICLE_NOTE
+    draftChronicleVisibility = 'private'
   }
 
   function resetCharacterDraft(): void {
@@ -607,8 +906,25 @@
     draftCharacterColor = colorPool[nextCharacterIndex % colorPool.length]
   }
 
+  function primeEntryDraft(entry: ChronicleEntry): void {
+    entryDraftLabel = entry.label
+    entryDraftYear = entry.year
+    entryDraftNote = entry.note
+    entryDraftVisibility = entry.visibility
+  }
+
   function openChroniclePanel(panelId: string): void {
     activeChroniclePanelId = panelId
+
+    if (panelId === CREATE_CHRONICLE_PANEL_ID) {
+      return
+    }
+
+    const entry = chronicleEntries.find((item) => item.id === panelId)
+
+    if (entry) {
+      primeEntryDraft(entry)
+    }
   }
 
   function collapseChroniclePanels(): void {
@@ -631,93 +947,238 @@
     }
   }
 
-  function saveChronicleDraft(): void {
+  async function saveChronicleDraft(): Promise<void> {
+    if (!canCreateChronicleEntry) {
+      requestAuthPrompt('创建编年节点需要先输入访问密钥。')
+      return
+    }
+
     const year = normaliseNumber(draftChronicleYear, getNextChronicleYear(chronicleEntries))
     const label = draftChronicleLabel.trim() || `新编年 ${year}`
     const note = draftChronicleNote.trim()
 
-    chronicleEntries = [
-      ...chronicleEntries,
-      {
-        id: createChronicleId(),
-        label,
-        note,
-        year,
-      },
-    ]
+    entryMutationTargetId = CREATE_CHRONICLE_PANEL_ID
 
-    activeChroniclePanelId = CREATE_CHRONICLE_PANEL_ID
-    resetChronicleDraft()
-  }
+    try {
+      const { payload, status } = await requestAgeChronicleApi('/age-chronicle/entries', {
+        body: JSON.stringify({
+          label,
+          note,
+          visibility: draftChronicleVisibility,
+          worldview: worldviewName,
+          year,
+        }),
+        method: 'POST',
+      })
 
-  function updateChronicleEntry(entryId: string, field: 'label' | 'note' | 'year', value: string): void {
-    chronicleEntries = chronicleEntries.map((entry) => {
-      if (entry.id !== entryId) {
-        return entry
-      }
-
-      if (field === 'year') {
-        return {
-          ...entry,
-          year: normaliseNumber(value, entry.year),
+      if (!payload.ok) {
+        if (status === 401) {
+          currentUser = null
+          capabilities = createEmptyCapabilities()
+          requestAuthPrompt(payload.message ?? '创建编年节点需要先输入访问密钥。')
+          return
         }
+
+        sharedSyncError = payload.message ?? '创建编年节点失败。'
+        return
       }
 
-      return {
-        ...entry,
-        [field]: value,
+      if (!applyAgeChronicleResponse(payload)) {
+        sharedSyncError = '创建编年节点后收到的响应无效。'
+        return
       }
-    })
+
+      sharedSyncError = ''
+      activeChroniclePanelId = CREATE_CHRONICLE_PANEL_ID
+      resetChronicleDraft()
+    } catch {
+      sharedSyncError = '创建编年节点失败，请确认聊天服务已启动。'
+    } finally {
+      entryMutationTargetId = ''
+    }
   }
 
-  function addCharacterProfile(): void {
+  async function saveChronicleEntryEdit(entryId: string): Promise<void> {
+    if (!canManageChronicleEntries) {
+      return
+    }
+
+    entryMutationTargetId = entryId
+
+    try {
+      const { payload, status } = await requestAgeChronicleApi(
+        `/age-chronicle/entries/${encodeURIComponent(entryId)}`,
+        {
+          body: JSON.stringify({
+            label: entryDraftLabel.trim() || `新编年 ${normaliseNumber(entryDraftYear, 0)}`,
+            note: entryDraftNote.trim(),
+            visibility: entryDraftVisibility,
+            worldview: worldviewName,
+            year: normaliseNumber(entryDraftYear, 0),
+          }),
+          method: 'PATCH',
+        },
+      )
+
+      if (!payload.ok) {
+        if (status === 401) {
+          currentUser = null
+          capabilities = createEmptyCapabilities()
+          requestAuthPrompt(payload.message ?? '更新编年节点需要先输入访问密钥。')
+          return
+        }
+
+        sharedSyncError = payload.message ?? '更新编年节点失败。'
+        return
+      }
+
+      if (!applyAgeChronicleResponse(payload)) {
+        sharedSyncError = '更新编年节点后收到的响应无效。'
+        return
+      }
+
+      sharedSyncError = ''
+      const updatedEntry = chronicleEntries.find((entry) => entry.id === entryId)
+
+      if (updatedEntry) {
+        primeEntryDraft(updatedEntry)
+      }
+    } catch {
+      sharedSyncError = '更新编年节点失败，请确认聊天服务已启动。'
+    } finally {
+      entryMutationTargetId = ''
+    }
+  }
+
+  async function removeChronicleEntry(entryId: string): Promise<void> {
+    if (!canManageChronicleEntries) {
+      return
+    }
+
+    entryMutationTargetId = entryId
+
+    try {
+      const { payload, status } = await requestAgeChronicleApi(
+        `/age-chronicle/entries/${encodeURIComponent(entryId)}`,
+        {
+          body: JSON.stringify({
+            delete: true,
+            worldview: worldviewName,
+          }),
+          method: 'PATCH',
+        },
+      )
+
+      if (!payload.ok) {
+        if (status === 401) {
+          currentUser = null
+          capabilities = createEmptyCapabilities()
+          requestAuthPrompt(payload.message ?? '删除编年节点需要先输入访问密钥。')
+          return
+        }
+
+        sharedSyncError = payload.message ?? '删除编年节点失败。'
+        return
+      }
+
+      if (!applyAgeChronicleResponse(payload)) {
+        sharedSyncError = '删除编年节点后收到的响应无效。'
+        return
+      }
+
+      sharedSyncError = ''
+      if (activeChroniclePanelId === entryId) {
+        activeChroniclePanelId = CREATE_CHRONICLE_PANEL_ID
+      }
+    } catch {
+      sharedSyncError = '删除编年节点失败，请确认聊天服务已启动。'
+    } finally {
+      entryMutationTargetId = ''
+    }
+  }
+
+  async function saveSharedStructure(
+    nextProfiles = characterProfiles,
+    nextStructureIndex = nextCharacterIndex,
+  ): Promise<boolean> {
+    if (!canEditSharedStructure) {
+      return false
+    }
+
+    if (!currentUser) {
+      requestAuthPrompt('修改角色结构需要先输入访问密钥。')
+      return false
+    }
+
+    isSavingStructure = true
+
+    try {
+      const { payload, status } = await requestAgeChronicleApi('/age-chronicle/state', {
+        body: JSON.stringify({
+          structure: {
+            characterProfiles: nextProfiles,
+            nextCharacterIndex: nextStructureIndex,
+          },
+          worldview: worldviewName,
+        }),
+        method: 'POST',
+      })
+
+      if (!payload.ok) {
+        if (status === 401) {
+          currentUser = null
+          capabilities = createEmptyCapabilities()
+          requestAuthPrompt(payload.message ?? '共享结构保存需要先输入访问密钥。')
+          return false
+        }
+
+        sharedSyncError = payload.message ?? '共享角色结构保存失败。'
+        return false
+      }
+
+      if (!applyAgeChronicleResponse(payload)) {
+        sharedSyncError = '共享角色结构保存后收到的响应无效。'
+        return false
+      }
+
+      sharedSyncError = ''
+      return true
+    } catch {
+      sharedSyncError = '共享角色结构保存失败，请确认聊天服务已启动。'
+      return false
+    } finally {
+      isSavingStructure = false
+    }
+  }
+
+  async function addCharacterProfile(): Promise<void> {
+    if (!canEditSharedStructure) {
+      return
+    }
+
+    const nextIndex = nextCharacterIndex + 1
     const profile: CharacterAgeProfile = {
-      id: createCharacterId(),
-      name: draftCharacterName.trim() || `新角色 ${nextCharacterIndex}`,
-      anchorYear: normaliseNumber(draftCharacterAnchorYear, getChronicleAnchorYear(chronicleEntries)),
       anchorAge: Math.max(0, normaliseNumber(draftCharacterAnchorAge, 16)),
-      color: draftCharacterColor,
+      anchorYear: normaliseNumber(draftCharacterAnchorYear, getChronicleAnchorYear(chronicleEntries)),
+      color: draftCharacterColor.trim() || colorPool[nextIndex % colorPool.length],
+      id: createCharacterId(),
+      name: draftCharacterName.trim() || `新角色 ${nextIndex}`,
     }
 
-    characterProfiles = [...characterProfiles, profile]
-    resetCharacterDraft()
+    const saved = await saveSharedStructure([...characterProfiles, profile], nextCharacterIndex)
+
+    if (saved) {
+      resetCharacterDraft()
+    }
   }
 
-  function removeChronicleEntry(entryId: string): void {
-    if (chronicleEntries.length <= 1) {
+  async function removeCharacterProfile(profileId: string): Promise<void> {
+    if (!canEditSharedStructure || characterProfiles.length <= 1) {
       return
     }
 
-    chronicleEntries = chronicleEntries.filter((entry) => entry.id !== entryId)
-    cellDescriptions = Object.fromEntries(
-      Object.entries(cellDescriptions).filter(([key]) => !key.endsWith(`::${entryId}`)),
-    )
-
-    if (activeChroniclePanelId === entryId) {
-      collapseChroniclePanels()
-    }
-
-    if (activeDescriptionEntryId === entryId) {
-      closeCellDescriptionPrompt()
-    }
-
-    resetChronicleDraft()
-  }
-
-  function removeCharacterProfile(profileId: string): void {
-    if (characterProfiles.length <= 1) {
-      return
-    }
-
-    characterProfiles = characterProfiles.filter((profile) => profile.id !== profileId)
-    hiddenCharacterIds = hiddenCharacterIds.filter((id) => id !== profileId)
-    cellDescriptions = Object.fromEntries(
-      Object.entries(cellDescriptions).filter(([key]) => !key.startsWith(`${profileId}::`)),
-    )
-
-    if (activeDescriptionProfileId === profileId) {
-      closeCellDescriptionPrompt()
-    }
+    const nextProfiles = characterProfiles.filter((profile) => profile.id !== profileId)
+    await saveSharedStructure(nextProfiles, nextCharacterIndex)
   }
 
   function toggleCharacterVisibility(profileId: string): void {
@@ -727,11 +1188,15 @@
   }
 
   function handleCharacterDragStart(profileId: string): void {
+    if (!canEditSharedStructure) {
+      return
+    }
+
     draggedCharacterId = profileId
   }
 
-  function handleCharacterDrop(targetId: string): void {
-    if (draggedCharacterId === '' || draggedCharacterId === targetId) {
+  async function handleCharacterDrop(targetId: string): Promise<void> {
+    if (!canEditSharedStructure || draggedCharacterId === '' || draggedCharacterId === targetId) {
       return
     }
 
@@ -739,14 +1204,15 @@
     const targetIndex = characterProfiles.findIndex((profile) => profile.id === targetId)
 
     if (sourceIndex === -1 || targetIndex === -1) {
+      draggedCharacterId = ''
       return
     }
 
     const reorderedProfiles = [...characterProfiles]
     const [sourceProfile] = reorderedProfiles.splice(sourceIndex, 1)
     reorderedProfiles.splice(targetIndex, 0, sourceProfile)
-    characterProfiles = reorderedProfiles
     draggedCharacterId = ''
+    await saveSharedStructure(reorderedProfiles, nextCharacterIndex)
   }
 
   function handleCharacterDragEnd(): void {
@@ -758,30 +1224,47 @@
   }
 
   function getCellDescription(profileId: string, entryId: string): string {
-    return cellDescriptions[createAgeCellDescriptionKey(profileId, entryId)] ?? ''
+    return ownCellDescriptions[createAgeCellDescriptionKey(profileId, entryId)] ?? ''
   }
 
-  function updateCellDescription(profileId: string, entryId: string, value: string): void {
-    const descriptionKey = createAgeCellDescriptionKey(profileId, entryId)
-    const nextValue = value
+  function getChronicleVisibilityLabel(visibility: ChronicleVisibility): string {
+    return visibility === 'public' ? '公开' : '私密'
+  }
 
-    if (nextValue.trim() === '') {
-      const nextDescriptions = { ...cellDescriptions }
-      delete nextDescriptions[descriptionKey]
-      cellDescriptions = nextDescriptions
-      return
+  function getChronicleVisibilityHint(entry: ChronicleEntry): string {
+    if (entry.visibility === 'public') {
+      return '所有可访问用户可见'
     }
 
-    cellDescriptions = {
-      ...cellDescriptions,
-      [descriptionKey]: nextValue,
+    if (entry.createdByUserId && currentUser?.id === entry.createdByUserId) {
+      return '仅你和管理员可见'
     }
+
+    if (isAdminCurrentUser) {
+      return '仅创建者和管理员可见'
+    }
+
+    return '仅创建者和管理员可见'
+  }
+
+  function formatMetaTimestamp(timestamp: number): string {
+    if (!Number.isFinite(timestamp) || timestamp <= 0) {
+      return '刚刚'
+    }
+
+    return new Intl.DateTimeFormat('zh-CN', {
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      month: '2-digit',
+    }).format(new Date(timestamp))
   }
 
   function openCellDescriptionPrompt(profileId: string, entryId: string): void {
     activeDescriptionProfileId = profileId
     activeDescriptionEntryId = entryId
     activeCellDescriptionDraft = getCellDescription(profileId, entryId)
+    cellDescriptionError = ''
     isCellDescriptionPromptOpen = true
   }
 
@@ -790,51 +1273,72 @@
     activeDescriptionProfileId = ''
     activeDescriptionEntryId = ''
     activeCellDescriptionDraft = ''
+    cellDescriptionError = ''
   }
 
-  function saveCellDescriptionDraft(): void {
+  async function saveCellDescriptionDraft(): Promise<void> {
+    if (!currentUser) {
+      requestAuthPrompt('保存年龄格备注需要先输入访问密钥。')
+      return
+    }
+
+    if (!canEditOwnCellNote) {
+      cellDescriptionError = isReadOnlyFallback
+        ? '当前处于只读兼容模式，无法写入私密备注。'
+        : '当前账号没有写入年龄格备注的权限。'
+      return
+    }
+
     if (activeDescriptionProfileId === '' || activeDescriptionEntryId === '') {
       return
     }
 
-    updateCellDescription(activeDescriptionProfileId, activeDescriptionEntryId, activeCellDescriptionDraft)
-    closeCellDescriptionPrompt()
+    isSavingCellNote = true
+    cellDescriptionError = ''
+
+    try {
+      const { payload, status } = await requestAgeChronicleApi('/age-chronicle/cell-note', {
+        body: JSON.stringify({
+          body: activeCellDescriptionDraft.trim(),
+          entryId: activeDescriptionEntryId,
+          profileId: activeDescriptionProfileId,
+          worldview: worldviewName,
+        }),
+        method: 'PUT',
+      })
+
+      if (!payload.ok) {
+        if (status === 401) {
+          currentUser = null
+          capabilities = createEmptyCapabilities()
+          requestAuthPrompt(payload.message ?? '保存年龄格备注需要先输入访问密钥。')
+          return
+        }
+
+        cellDescriptionError = payload.message ?? '保存年龄格备注失败。'
+        return
+      }
+
+      if (!applyAgeChronicleResponse(payload)) {
+        cellDescriptionError = '保存年龄格备注后收到的响应无效。'
+        return
+      }
+
+      sharedSyncError = ''
+      closeCellDescriptionPrompt()
+    } catch {
+      cellDescriptionError = '保存年龄格备注失败，请确认聊天服务已启动。'
+    } finally {
+      isSavingCellNote = false
+    }
   }
 
   onMount(() => {
-    void restoreSharedAuthSession()
-    void loadSharedAgeChronicleState(worldviewName)
+    void (async () => {
+      await restoreSharedAuthSession()
+      await loadSharedAgeChronicleState(worldviewName)
+    })()
   })
-
-  onDestroy(() => {
-    clearSharedSyncTimer()
-  })
-
-  $: if (isSharedStateLoaded && loadedWorldviewStorageKey !== getAgeChronicleStorageKey(worldviewName)) {
-    void loadSharedAgeChronicleState(worldviewName)
-  }
-
-  $: if (isStorageHydrated) {
-    loadedWorldviewStorageKey
-    chronicleEntries
-    characterProfiles
-    hiddenCharacterIds
-    cellDescriptions
-    nextChronicleIndex
-    nextCharacterIndex
-    persistAgeChronicleState()
-  }
-
-  $: if (isStorageHydrated && isSharedStateLoaded && !isApplyingSharedState) {
-    currentUser
-    chronicleEntries
-    characterProfiles
-    hiddenCharacterIds
-    cellDescriptions
-    nextChronicleIndex
-    nextCharacterIndex
-    queueSharedStateSync()
-  }
 </script>
 
 <svelte:window onclick={handleWindowClick} />
@@ -858,7 +1362,7 @@
             <p class="section-label">编年节点</p>
             <h3>自定义编年</h3>
           </div>
-          <p class="age-panel-tip">顶部固定新增，历史节点点击展开，点外部统一收起。</p>
+          <p class="age-panel-tip">节点按权限过滤显示。私密节点只对创建者和管理员可见。</p>
         </div>
 
         <div bind:this={chronicleAccordionElement} class="age-editor-list age-editor-list-accordion">
@@ -868,9 +1372,9 @@
             class="age-editor-card age-editor-card-create"
           >
             <button
+              aria-expanded={activeChroniclePanelId === CREATE_CHRONICLE_PANEL_ID}
               class="age-editor-toggle"
               type="button"
-              aria-expanded={activeChroniclePanelId === CREATE_CHRONICLE_PANEL_ID}
               onclick={() => openChroniclePanel(CREATE_CHRONICLE_PANEL_ID)}
             >
               <div class="age-editor-toggle-copy">
@@ -882,29 +1386,66 @@
 
             {#if activeChroniclePanelId === CREATE_CHRONICLE_PANEL_ID}
               <div class="age-editor-body" transition:slide={{ duration: 180 }}>
-                <label class="age-field">
-                  <span>标签</span>
-                  <input bind:value={draftChronicleLabel} type="text" />
-                </label>
+                {#if canCreateChronicleEntry}
+                  <label class="age-field">
+                    <span>标签</span>
+                    <input bind:value={draftChronicleLabel} type="text" />
+                  </label>
 
-                <label class="age-field">
-                  <span>编年值</span>
-                  <input bind:value={draftChronicleYear} type="number" />
-                </label>
+                  <label class="age-field">
+                    <span>编年值</span>
+                    <input bind:value={draftChronicleYear} type="number" />
+                  </label>
 
-                <label class="age-field">
-                  <span>备注</span>
-                  <textarea bind:value={draftChronicleNote} rows="3"></textarea>
-                </label>
+                  <label class="age-field">
+                    <span>可见性</span>
+                    <select bind:value={draftChronicleVisibility}>
+                      <option value="private">仅自己和管理员可见</option>
+                      <option value="public">公开给所有可访问用户</option>
+                    </select>
+                  </label>
 
-                <div class="age-editor-actions">
-                  <button class="toolbar-action" type="button" onclick={collapseChroniclePanels}>
-                    收起
-                  </button>
-                  <button class="toolbar-action toolbar-primary" type="button" onclick={saveChronicleDraft}>
-                    保存节点
-                  </button>
-                </div>
+                  <label class="age-field">
+                    <span>备注</span>
+                    <textarea bind:value={draftChronicleNote} rows="3"></textarea>
+                  </label>
+
+                  <div class="age-editor-actions">
+                    <button class="toolbar-action" type="button" onclick={collapseChroniclePanels}>
+                      收起
+                    </button>
+                    <button
+                      class="toolbar-action toolbar-primary"
+                      disabled={entryMutationTargetId === CREATE_CHRONICLE_PANEL_ID}
+                      type="button"
+                      onclick={() => void saveChronicleDraft()}
+                    >
+                      {entryMutationTargetId === CREATE_CHRONICLE_PANEL_ID ? '保存中…' : '保存节点'}
+                    </button>
+                  </div>
+                {:else}
+                  <div class="age-editor-lock-note">
+                    <strong>{isReadOnlyFallback ? '当前为只读兼容模式' : '需要先登录'}</strong>
+                    <p>
+                      {#if isReadOnlyFallback}
+                        当前页面只保留只读查看能力，暂不允许创建新节点。
+                      {:else}
+                        普通用户登录后可以新增节点，并选择公开或仅自己可见。
+                      {/if}
+                    </p>
+                    {#if !isReadOnlyFallback}
+                      <div class="age-editor-actions">
+                        <button
+                          class="toolbar-action toolbar-primary"
+                          type="button"
+                          onclick={() => requestAuthPrompt('创建编年节点需要先输入访问密钥。')}
+                        >
+                          输入密钥
+                        </button>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               </div>
             {/if}
           </article>
@@ -916,76 +1457,85 @@
               class="age-editor-card age-editor-card-accordion"
             >
               <button
+                aria-expanded={activeChroniclePanelId === entry.id}
                 class="age-editor-toggle"
                 type="button"
-                aria-expanded={activeChroniclePanelId === entry.id}
                 onclick={() => openChroniclePanel(entry.id)}
               >
                 <div class="age-editor-toggle-copy">
                   <span class="age-editor-year">第 {entry.year} 年</span>
                   <strong>{entry.label}</strong>
                 </div>
-                <span class="age-editor-hint">
-                  {activeChroniclePanelId === entry.id ? '编辑中' : '点击展开'}
+                <span class={`age-entry-visibility is-${entry.visibility}`}>
+                  {getChronicleVisibilityLabel(entry.visibility)}
                 </span>
               </button>
 
               {#if activeChroniclePanelId === entry.id}
                 <div class="age-editor-body" transition:slide={{ duration: 180 }}>
-                  <label class="age-field">
-                    <span>标签</span>
-                    <input
-                      type="text"
-                      value={entry.label}
-                      oninput={(event) =>
-                        updateChronicleEntry(
-                          entry.id,
-                          'label',
-                          (event.currentTarget as HTMLInputElement).value,
-                        )}
-                    />
-                  </label>
+                  {#if canManageChronicleEntries}
+                    <label class="age-field">
+                      <span>标签</span>
+                      <input bind:value={entryDraftLabel} type="text" />
+                    </label>
 
-                  <label class="age-field">
-                    <span>编年值</span>
-                    <input
-                      type="number"
-                      value={entry.year}
-                      oninput={(event) =>
-                        updateChronicleEntry(
-                          entry.id,
-                          'year',
-                          (event.currentTarget as HTMLInputElement).value,
-                        )}
-                    />
-                  </label>
+                    <label class="age-field">
+                      <span>编年值</span>
+                      <input bind:value={entryDraftYear} type="number" />
+                    </label>
 
-                  <label class="age-field">
-                    <span>备注</span>
-                    <textarea
-                      rows="3"
-                      oninput={(event) =>
-                        updateChronicleEntry(
-                          entry.id,
-                          'note',
-                          (event.currentTarget as HTMLTextAreaElement).value,
-                        )}
-                    >{entry.note}</textarea>
-                  </label>
+                    <label class="age-field">
+                      <span>可见性</span>
+                      <select bind:value={entryDraftVisibility}>
+                        <option value="private">仅创建者和管理员可见</option>
+                        <option value="public">公开给所有可访问用户</option>
+                      </select>
+                    </label>
 
-                  <div class="age-editor-actions">
-                    <button class="toolbar-action" type="button" onclick={collapseChroniclePanels}>
-                      收起
-                    </button>
-                    <button
-                      class="age-remove"
-                      type="button"
-                      onclick={() => removeChronicleEntry(entry.id)}
-                      disabled={chronicleEntries.length <= 1}
-                    >
-                      删除
-                    </button>
-                  </div>
+                    <label class="age-field">
+                      <span>备注</span>
+                      <textarea bind:value={entryDraftNote} rows="3"></textarea>
+                    </label>
+
+                    <div class="age-editor-meta">
+                      <span>最近更新：{formatMetaTimestamp(entry.updatedAt)}</span>
+                      <span>{getChronicleVisibilityHint(entry)}</span>
+                    </div>
+
+                    <div class="age-editor-actions">
+                      <button class="toolbar-action" type="button" onclick={collapseChroniclePanels}>
+                        收起
+                      </button>
+                      <button
+                        class="age-remove"
+                        disabled={entryMutationTargetId === entry.id}
+                        type="button"
+                        onclick={() => void removeChronicleEntry(entry.id)}
+                      >
+                        {entryMutationTargetId === entry.id ? '处理中…' : '删除'}
+                      </button>
+                      <button
+                        class="toolbar-action toolbar-primary"
+                        disabled={entryMutationTargetId === entry.id}
+                        type="button"
+                        onclick={() => void saveChronicleEntryEdit(entry.id)}
+                      >
+                        {entryMutationTargetId === entry.id ? '保存中…' : '保存修改'}
+                      </button>
+                    </div>
+                  {:else}
+                    <div class="age-entry-readonly-note">
+                      <div class="age-editor-meta">
+                        <span>{getChronicleVisibilityHint(entry)}</span>
+                        <span>最近更新：{formatMetaTimestamp(entry.updatedAt)}</span>
+                      </div>
+                      {#if entry.note.trim() !== ''}
+                        <p>{entry.note}</p>
+                      {:else}
+                        <p>该节点没有补充备注。</p>
+                      {/if}
+                    </div>
+                  {/if}
                 </div>
               {/if}
             </article>
@@ -996,45 +1546,65 @@
       <section class="age-panel">
         <div class="age-panel-head">
           <div>
-            <p class="section-label">角色录入</p>
-            <h3>新增角色</h3>
+            <p class="section-label">角色结构</p>
+            <h3>角色列维护</h3>
           </div>
-          <p class="age-panel-tip">角色确认添加后只保留在右侧图例区，通过图例控制显示、顺序和删除。</p>
+          <p class="age-panel-tip">角色顺序和角色列属于共享结构，本轮仅管理员可维护。</p>
         </div>
 
         <div class="age-editor-list">
-          <article class="age-editor-card age-editor-card-create">
-            <label class="age-field">
-              <span>角色名</span>
-              <input bind:value={draftCharacterName} type="text" />
-            </label>
-
-            <div class="age-field-row">
+          {#if canEditSharedStructure}
+            <article class="age-editor-card age-editor-card-create">
               <label class="age-field">
-                <span>基准编年</span>
-                <input bind:value={draftCharacterAnchorYear} type="number" />
+                <span>角色名</span>
+                <input bind:value={draftCharacterName} type="text" />
               </label>
 
-              <label class="age-field">
-                <span>基准年龄</span>
-                <input bind:value={draftCharacterAnchorAge} min="0" type="number" />
-              </label>
-            </div>
+              <div class="age-field-row">
+                <label class="age-field">
+                  <span>基准编年</span>
+                  <input bind:value={draftCharacterAnchorYear} type="number" />
+                </label>
 
-            <label class="age-field">
-              <span>角色颜色</span>
-              <div class="age-color-row">
-                <input class="age-color-picker" bind:value={draftCharacterColor} type="color" />
-                <input bind:value={draftCharacterColor} type="text" />
+                <label class="age-field">
+                  <span>基准年龄</span>
+                  <input bind:value={draftCharacterAnchorAge} min="0" type="number" />
+                </label>
               </div>
-            </label>
 
-            <div class="age-editor-actions">
-              <button class="toolbar-action toolbar-primary" type="button" onclick={addCharacterProfile}>
-                添加角色
-              </button>
-            </div>
-          </article>
+              <label class="age-field">
+                <span>角色颜色</span>
+                <div class="age-color-row">
+                  <input class="age-color-picker" bind:value={draftCharacterColor} type="color" />
+                  <input bind:value={draftCharacterColor} type="text" />
+                </div>
+              </label>
+
+              <div class="age-editor-actions">
+                <button
+                  class="toolbar-action toolbar-primary"
+                  disabled={isSavingStructure}
+                  type="button"
+                  onclick={() => void addCharacterProfile()}
+                >
+                  {isSavingStructure ? '保存中…' : '添加角色'}
+                </button>
+              </div>
+            </article>
+          {:else}
+            <article class="age-editor-card age-editor-card-create">
+              <div class="age-editor-lock-note">
+                <strong>{isReadOnlyFallback ? '当前为只读兼容模式' : '仅管理员可维护角色结构'}</strong>
+                <p>
+                  {#if isReadOnlyFallback}
+                    当前无法写入共享角色结构，只保留查看和本地显示隐藏。
+                  {:else}
+                    普通用户仍可查看、隐藏本地角色列，并填写自己的私密年龄格备注。
+                  {/if}
+                </p>
+              </div>
+            </article>
+          {/if}
         </div>
       </section>
     </aside>
@@ -1045,12 +1615,13 @@
           <p class="section-label">编年视图</p>
           <h2>同一节点下的角色年龄对照</h2>
         </div>
-        <div>
-          <p class="board-note">
-            点击角色条可切换显示，拖动可调整左右顺序，删除也在这里完成。
-          </p>
+        <div class="age-board-note-stack">
+          <p class="board-note">年龄格备注默认仅作者与管理员可见，管理员可在弹窗内查看全部私密备注。</p>
           {#if sharedSyncError !== ''}
-            <p class="board-note">{sharedSyncError}</p>
+            <p class="board-note age-board-status">{sharedSyncError}</p>
+          {/if}
+          {#if isStateLoading}
+            <p class="board-note age-board-status">正在载入年龄编年状态…</p>
           {/if}
         </div>
       </div>
@@ -1061,15 +1632,15 @@
             class:is-dragging={draggedCharacterId === profile.id}
             class:is-hidden={hiddenCharacterIds.includes(profile.id)}
             class="age-legend-item age-legend-card"
-            draggable="true"
+            draggable={canEditSharedStructure}
             style={`--legend-color:${profile.color}; --legend-tint:${getAgeTone(profile.color)};`}
             ondragend={handleCharacterDragEnd}
             ondragover={(event) => event.preventDefault()}
             ondragstart={() => handleCharacterDragStart(profile.id)}
-            ondrop={() => handleCharacterDrop(profile.id)}
+            ondrop={() => void handleCharacterDrop(profile.id)}
           >
             <button class="age-legend-main" type="button" onclick={() => toggleCharacterVisibility(profile.id)}>
-              <span class="age-swatch" aria-hidden="true"></span>
+              <span aria-hidden="true" class="age-swatch"></span>
               <span class="age-legend-copy">
                 <strong>{profile.name}</strong>
                 <span>
@@ -1082,14 +1653,16 @@
               </span>
             </button>
 
-            <button
-              class="age-legend-delete"
-              type="button"
-              onclick={() => removeCharacterProfile(profile.id)}
-              disabled={characterProfiles.length <= 1}
-            >
-              删除
-            </button>
+            {#if canEditSharedStructure}
+              <button
+                class="age-legend-delete"
+                disabled={characterProfiles.length <= 1 || isSavingStructure}
+                type="button"
+                onclick={() => void removeCharacterProfile(profile.id)}
+              >
+                删除
+              </button>
+            {/if}
           </article>
         {/each}
       </div>
@@ -1097,7 +1670,12 @@
       {#if visibleCharacterProfiles.length === 0}
         <div class="age-empty-state">
           <strong>当前没有显示中的角色</strong>
-          <p>点击上面的角色条重新显示，或先在左侧添加新的角色。</p>
+          <p>点击上面的角色条重新显示，或由管理员先补充新的角色列。</p>
+        </div>
+      {:else if sortedChronicleEntries.length === 0}
+        <div class="age-empty-state">
+          <strong>当前没有你可见的编年节点</strong>
+          <p>可以先新增一个公开或私密节点；未授权用户不会看到其他人的隐藏节点。</p>
         </div>
       {:else}
         <div class="age-matrix" style={`--column-count:${visibleCharacterProfiles.length};`}>
@@ -1119,15 +1697,14 @@
             <div class="age-row">
               <div class="age-cell age-chronicle-cell">
                 <strong>{entry.label}</strong>
-                <span>第 {entry.year} 年</span>
+                <span>第 {entry.year} 年 · {getChronicleVisibilityLabel(entry.visibility)}</span>
                 {#if entry.note}
                   <p>{entry.note}</p>
                 {/if}
               </div>
 
               {#each visibleCharacterProfiles as profile (profile.id)}
-                {@const cellDescriptionKey = createAgeCellDescriptionKey(profile.id, entry.id)}
-                {@const cellDescription = (cellDescriptions[cellDescriptionKey] ?? '').trim()}
+                {@const cellDescription = getCellDescription(profile.id, entry.id).trim()}
                 <button
                   class="age-cell age-value-cell"
                   style={`--cell-color:${profile.color}; --cell-tint:${getAgeTone(profile.color)};`}
@@ -1156,7 +1733,7 @@
         onclick={closeCellDescriptionPrompt}
       ></button>
 
-      <div class="age-note-dialog" role="dialog" aria-modal="true" aria-labelledby="age-note-title">
+      <div aria-labelledby="age-note-title" aria-modal="true" class="age-note-dialog" role="dialog">
         <div class="age-note-dialog-head">
           <div class="age-note-dialog-copy">
             <span class="section-label">年度描述</span>
@@ -1172,29 +1749,90 @@
           </button>
         </div>
 
-        <label class="age-field">
-          <span>描述</span>
-          <textarea
-            bind:value={activeCellDescriptionDraft}
-            placeholder={AGE_CELL_DESCRIPTION_PLACEHOLDER}
-            rows="6"
-          ></textarea>
-        </label>
+        {#if isAdminCurrentUser && activeAdminCellNoteList.length > 0}
+          <section class="age-note-dialog-block">
+            <div class="age-note-dialog-section-head">
+              <strong>该格子的全部私密备注</strong>
+              <span>仅管理员可见</span>
+            </div>
 
-        <div class="age-note-dialog-actions">
-          <button
-            class="toolbar-action"
-            type="button"
-            onclick={() => {
-              activeCellDescriptionDraft = ''
-            }}
-          >
-            清空
-          </button>
-          <button class="toolbar-action toolbar-primary" type="button" onclick={saveCellDescriptionDraft}>
-            保存描述
-          </button>
-        </div>
+            <div class="age-note-admin-list">
+              {#each activeAdminCellNoteList as note (note.authorUserId)}
+                <article class="age-note-admin-card">
+                  <div class="age-note-admin-meta">
+                    <strong>{note.authorDisplayName}</strong>
+                    <span>{formatMetaTimestamp(note.updatedAt)}</span>
+                  </div>
+                  <p>{note.body}</p>
+                </article>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        <section class="age-note-dialog-block">
+          <div class="age-note-dialog-section-head">
+            <strong>我的私密备注</strong>
+            <span>仅你和管理员可见</span>
+          </div>
+
+          {#if !currentUser}
+            <div class="age-editor-lock-note">
+              <strong>保存私密备注需要先登录</strong>
+              <p>输入一次访问密钥后，你就可以在这个年龄格下写入只对自己和管理员可见的备注。</p>
+              <div class="age-editor-actions">
+                <button
+                  class="toolbar-action toolbar-primary"
+                  type="button"
+                  onclick={() => requestAuthPrompt('保存年龄格备注需要先输入访问密钥。')}
+                >
+                  输入密钥
+                </button>
+              </div>
+            </div>
+          {:else}
+            <label class="age-field">
+              <span>描述</span>
+              <textarea
+                bind:value={activeCellDescriptionDraft}
+                disabled={!canEditOwnCellNote}
+                placeholder={AGE_CELL_DESCRIPTION_PLACEHOLDER}
+                rows="6"
+              ></textarea>
+            </label>
+
+            {#if !canEditOwnCellNote}
+              <p class="age-note-dialog-tip">当前处于只读兼容模式，暂时不能修改私密备注。</p>
+            {/if}
+          {/if}
+        </section>
+
+        {#if cellDescriptionError !== ''}
+          <div class="chat-nickname-error">{cellDescriptionError}</div>
+        {/if}
+
+        {#if currentUser}
+          <div class="age-note-dialog-actions">
+            <button
+              class="toolbar-action"
+              disabled={!canEditOwnCellNote || isSavingCellNote}
+              type="button"
+              onclick={() => {
+                activeCellDescriptionDraft = ''
+              }}
+            >
+              清空
+            </button>
+            <button
+              class="toolbar-action toolbar-primary"
+              disabled={!canEditOwnCellNote || isSavingCellNote}
+              type="button"
+              onclick={() => void saveCellDescriptionDraft()}
+            >
+              {isSavingCellNote ? '保存中…' : '保存描述'}
+            </button>
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -1205,7 +1843,7 @@
         <div>
           <span class="section-label">共享同步</span>
           <h3>先输入访问密钥</h3>
-          <p>年龄编年现在会同步到共享服务。输入一次密钥后，其他用户就能看到你的修改。</p>
+          <p>年龄编年现在依赖共享服务；节点和私密年龄格备注都会按权限写入后端。</p>
         </div>
 
         <label class="chat-nickname-field">
@@ -1228,7 +1866,7 @@
             稍后再说
           </button>
           <button class="toolbar-action toolbar-primary" disabled={isAuthChecking} type="submit">
-            {isAuthChecking ? '验证中…' : '验证并同步'}
+            {isAuthChecking ? '验证中…' : '验证并继续'}
           </button>
         </div>
       </form>

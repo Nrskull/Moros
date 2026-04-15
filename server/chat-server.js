@@ -77,7 +77,7 @@ const AUTH_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30
 const AUTH_SESSION_RENEW_THRESHOLD_MS = 1000 * 60 * 60 * 24 * 7
 const AUTH_MAX_ACCESS_KEY_LENGTH = 128
 const AUTH_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 10
-const AUTH_RATE_LIMIT_BLOCK_MS = 1000 * 60 * 15
+const AUTH_RATE_LIMIT_BLOCK_MS = 1000 * 60 * 5
 const AUTH_RATE_LIMIT_MAX_FAILURES = 6
 const ADMIN_ACCESS_KEY_FILE = path.join(dataDirectory, 'admin-access-key.txt')
 const SEEDED_USER_ACCESS_KEY_FILE = path.join(dataDirectory, 'seeded-user-access-keys.txt')
@@ -98,6 +98,8 @@ const AGE_CHRONICLE_MAX_NOTE_LENGTH = 4000
 const AGE_CHRONICLE_MAX_CHARACTER_DISPLAY_NAME_LENGTH = 64
 const AGE_CHRONICLE_MAX_COLOR_LENGTH = 24
 const AGE_CHRONICLE_MAX_CELL_DESCRIPTION_LENGTH = 4000
+const AGE_CHRONICLE_VISIBILITY_PRIVATE = 'private'
+const AGE_CHRONICLE_VISIBILITY_PUBLIC = 'public'
 const CHAT_PRESENTATION_BUBBLE = 'bubble'
 const CHAT_PRESENTATION_KP_NARRATION = 'kp-narration'
 const ADMIN_KP_CHARACTER_NAME = 'KP'
@@ -117,6 +119,58 @@ const ATTRIBUTE_DEFINITIONS = [
 const ATTRIBUTE_LABEL_TO_KEY = new Map(
   ATTRIBUTE_DEFINITIONS.map((entry) => [entry.label, entry.key]),
 )
+
+const DEFAULT_AGE_CHRONICLE_ENTRIES = [
+  {
+    id: 'chronicle_177',
+    label: '新纪年 177',
+    note: '负层夹缝、硕鼠粮仓。',
+    year: 177,
+  },
+  {
+    id: 'chronicle_180',
+    label: '新纪年 180',
+    note: '竞选年、慈善领养。',
+    year: 180,
+  },
+  {
+    id: 'chronicle_184',
+    label: '新纪年 184',
+    note: '作为后续节点，用来验证自定义编年扩展后年龄是否持续自动推算。',
+    year: 184,
+  },
+]
+
+const DEFAULT_AGE_CHARACTER_PROFILES = [
+  {
+    anchorAge: 11,
+    anchorYear: 177,
+    color: '#a46245',
+    id: 'char_liuzhizhou',
+    name: '柳之舟',
+  },
+  {
+    anchorAge: 10,
+    anchorYear: 177,
+    color: '#2a9a8b',
+    id: 'char_liuzhiqing',
+    name: '柳之清',
+  },
+  {
+    anchorAge: 14,
+    anchorYear: 180,
+    color: '#42a2de',
+    id: 'char_yaoguang',
+    name: '爻光',
+  },
+  {
+    anchorAge: 5,
+    anchorYear: 177,
+    color: '#dcde42',
+    id: 'char_bangyi',
+    name: '邦伊',
+  },
+]
 
 fs.mkdirSync(dataDirectory, { recursive: true })
 
@@ -257,6 +311,46 @@ database.exec(`
     updated_by_user_id TEXT,
     FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS age_chronicle_entries (
+    worldview_name TEXT NOT NULL,
+    id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    note TEXT NOT NULL,
+    visibility TEXT NOT NULL,
+    created_by_user_id TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (worldview_name, id),
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_age_chronicle_entries_worldview_year
+    ON age_chronicle_entries(worldview_name, year, created_at);
+
+  CREATE TABLE IF NOT EXISTS age_chronicle_structures (
+    worldview_name TEXT PRIMARY KEY,
+    structure_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by_user_id TEXT,
+    FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS age_chronicle_cell_notes (
+    worldview_name TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    author_user_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (worldview_name, profile_id, entry_id, author_user_id),
+    FOREIGN KEY (author_user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_age_chronicle_cell_notes_worldview_entry
+    ON age_chronicle_cell_notes(worldview_name, entry_id, profile_id, updated_at);
 `)
 
 function ensureColumn(tableName, columnName, columnDefinition) {
@@ -536,6 +630,179 @@ const statementUpsertAgeChronicleState = database.prepare(`
     state_json = excluded.state_json,
     updated_at = excluded.updated_at,
     updated_by_user_id = excluded.updated_by_user_id
+`)
+
+const statementSelectAgeChronicleEntriesForWorldview = database.prepare(`
+  SELECT
+    worldview_name AS worldviewName,
+    id,
+    label,
+    year,
+    note,
+    visibility,
+    created_by_user_id AS createdByUserId,
+    created_at AS createdAt,
+    updated_at AS updatedAt
+  FROM age_chronicle_entries
+  WHERE worldview_name = ?
+  ORDER BY year ASC, created_at ASC, id ASC
+`)
+
+const statementSelectAgeChronicleEntry = database.prepare(`
+  SELECT
+    worldview_name AS worldviewName,
+    id,
+    label,
+    year,
+    note,
+    visibility,
+    created_by_user_id AS createdByUserId,
+    created_at AS createdAt,
+    updated_at AS updatedAt
+  FROM age_chronicle_entries
+  WHERE worldview_name = ?
+    AND id = ?
+  LIMIT 1
+`)
+
+const statementInsertAgeChronicleEntry = database.prepare(`
+  INSERT INTO age_chronicle_entries (
+    worldview_name,
+    id,
+    label,
+    year,
+    note,
+    visibility,
+    created_by_user_id,
+    created_at,
+    updated_at
+  )
+  VALUES (
+    @worldviewName,
+    @id,
+    @label,
+    @year,
+    @note,
+    @visibility,
+    @createdByUserId,
+    @createdAt,
+    @updatedAt
+  )
+`)
+
+const statementUpdateAgeChronicleEntry = database.prepare(`
+  UPDATE age_chronicle_entries
+  SET label = @label,
+      year = @year,
+      note = @note,
+      visibility = @visibility,
+      updated_at = @updatedAt
+  WHERE worldview_name = @worldviewName
+    AND id = @id
+`)
+
+const statementDeleteAgeChronicleEntry = database.prepare(`
+  DELETE FROM age_chronicle_entries
+  WHERE worldview_name = ?
+    AND id = ?
+`)
+
+const statementCountAgeChronicleEntriesForWorldview = database.prepare(`
+  SELECT COUNT(*) AS count
+  FROM age_chronicle_entries
+  WHERE worldview_name = ?
+`)
+
+const statementSelectAgeChronicleStructure = database.prepare(`
+  SELECT
+    worldview_name AS worldviewName,
+    structure_json AS structureJson,
+    updated_at AS updatedAt,
+    updated_by_user_id AS updatedByUserId
+  FROM age_chronicle_structures
+  WHERE worldview_name = ?
+  LIMIT 1
+`)
+
+const statementUpsertAgeChronicleStructure = database.prepare(`
+  INSERT INTO age_chronicle_structures (worldview_name, structure_json, updated_at, updated_by_user_id)
+  VALUES (@worldviewName, @structureJson, @updatedAt, @updatedByUserId)
+  ON CONFLICT(worldview_name) DO UPDATE SET
+    structure_json = excluded.structure_json,
+    updated_at = excluded.updated_at,
+    updated_by_user_id = excluded.updated_by_user_id
+`)
+
+const statementSelectAgeChronicleCellNotesForWorldview = database.prepare(`
+  SELECT
+    age_chronicle_cell_notes.worldview_name AS worldviewName,
+    age_chronicle_cell_notes.profile_id AS profileId,
+    age_chronicle_cell_notes.entry_id AS entryId,
+    age_chronicle_cell_notes.author_user_id AS authorUserId,
+    age_chronicle_cell_notes.body,
+    age_chronicle_cell_notes.created_at AS createdAt,
+    age_chronicle_cell_notes.updated_at AS updatedAt,
+    users.display_name AS authorDisplayName,
+    users.handle AS authorHandle
+  FROM age_chronicle_cell_notes
+  LEFT JOIN users ON users.id = age_chronicle_cell_notes.author_user_id
+  WHERE age_chronicle_cell_notes.worldview_name = ?
+  ORDER BY age_chronicle_cell_notes.updated_at DESC, age_chronicle_cell_notes.author_user_id ASC
+`)
+
+const statementSelectAgeChronicleCellNote = database.prepare(`
+  SELECT
+    worldview_name AS worldviewName,
+    profile_id AS profileId,
+    entry_id AS entryId,
+    author_user_id AS authorUserId,
+    body,
+    created_at AS createdAt,
+    updated_at AS updatedAt
+  FROM age_chronicle_cell_notes
+  WHERE worldview_name = ?
+    AND profile_id = ?
+    AND entry_id = ?
+    AND author_user_id = ?
+  LIMIT 1
+`)
+
+const statementUpsertAgeChronicleCellNote = database.prepare(`
+  INSERT INTO age_chronicle_cell_notes (
+    worldview_name,
+    profile_id,
+    entry_id,
+    author_user_id,
+    body,
+    created_at,
+    updated_at
+  )
+  VALUES (
+    @worldviewName,
+    @profileId,
+    @entryId,
+    @authorUserId,
+    @body,
+    @createdAt,
+    @updatedAt
+  )
+  ON CONFLICT(worldview_name, profile_id, entry_id, author_user_id) DO UPDATE SET
+    body = excluded.body,
+    updated_at = excluded.updated_at
+`)
+
+const statementDeleteAgeChronicleCellNote = database.prepare(`
+  DELETE FROM age_chronicle_cell_notes
+  WHERE worldview_name = ?
+    AND profile_id = ?
+    AND entry_id = ?
+    AND author_user_id = ?
+`)
+
+const statementDeleteAgeChronicleCellNotesForEntry = database.prepare(`
+  DELETE FROM age_chronicle_cell_notes
+  WHERE worldview_name = ?
+    AND entry_id = ?
 `)
 
 const statementInsertRoomMembership = database.prepare(`
@@ -1106,7 +1373,7 @@ function appendCorsHeaders(request, headers = {}) {
     ...headers,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,OPTIONS',
     'Access-Control-Allow-Origin': allowedOrigin,
     Vary: 'Origin',
   }
@@ -1627,6 +1894,330 @@ function sanitiseAgeChronicleState(input) {
       'chronicle_custom_',
       chronicleEntries.map((entry) => entry.id),
       chronicleEntries.length,
+    ),
+  }
+}
+
+function normaliseAgeChronicleVisibility(value) {
+  return value === AGE_CHRONICLE_VISIBILITY_PUBLIC
+    ? AGE_CHRONICLE_VISIBILITY_PUBLIC
+    : AGE_CHRONICLE_VISIBILITY_PRIVATE
+}
+
+function sanitiseAgeChronicleStructure(input) {
+  if (!input || typeof input !== 'object') {
+    return null
+  }
+
+  const characterProfilesSource = Array.isArray(input.characterProfiles)
+    ? input.characterProfiles.slice(0, AGE_CHRONICLE_MAX_CHARACTER_COUNT)
+    : []
+
+  const characterProfiles = characterProfilesSource.flatMap((profile, index) => {
+    if (!profile || typeof profile !== 'object') {
+      return []
+    }
+
+    const id = sanitiseAgeChronicleShortText(profile.id, 96, `char_${index + 1}`)
+    return [
+      {
+        anchorAge: Math.max(0, normaliseAgeChronicleNumber(profile.anchorAge, 0)),
+        anchorYear: normaliseAgeChronicleNumber(profile.anchorYear, 0),
+        color: sanitiseAgeChronicleShortText(profile.color, AGE_CHRONICLE_MAX_COLOR_LENGTH, '#a46245'),
+        id,
+        name: sanitiseAgeChronicleShortText(
+          profile.name,
+          AGE_CHRONICLE_MAX_CHARACTER_DISPLAY_NAME_LENGTH,
+          '未命名角色',
+        ),
+      },
+    ]
+  })
+
+  const safeProfiles = characterProfiles.length > 0
+    ? characterProfiles
+    : DEFAULT_AGE_CHARACTER_PROFILES.map((profile) => ({ ...profile }))
+
+  return {
+    characterProfiles: safeProfiles,
+    nextCharacterIndex: resolveAgeChronicleNextIndex(
+      input.nextCharacterIndex,
+      'char_custom_',
+      safeProfiles.map((profile) => profile.id),
+      safeProfiles.length,
+    ),
+  }
+}
+
+function createDefaultAgeChronicleStructure() {
+  return {
+    characterProfiles: DEFAULT_AGE_CHARACTER_PROFILES.map((profile) => ({ ...profile })),
+    nextCharacterIndex: DEFAULT_AGE_CHARACTER_PROFILES.length,
+  }
+}
+
+function createDefaultAgeChronicleEntries(ownerUserId = ADMIN_USER.id, timestamp = Date.now()) {
+  return DEFAULT_AGE_CHRONICLE_ENTRIES.map((entry) => ({
+    createdAt: timestamp,
+    createdByUserId: ownerUserId,
+    id: entry.id,
+    label: entry.label,
+    note: entry.note,
+    updatedAt: timestamp,
+    visibility: AGE_CHRONICLE_VISIBILITY_PUBLIC,
+    worldviewName: '',
+    year: entry.year,
+  }))
+}
+
+function serialiseAgeChronicleEntry(row) {
+  return {
+    createdAt: row.createdAt,
+    createdByUserId: row.createdByUserId ?? null,
+    id: row.id,
+    label: row.label,
+    note: row.note,
+    updatedAt: row.updatedAt,
+    visibility: normaliseAgeChronicleVisibility(row.visibility),
+    year: row.year,
+  }
+}
+
+function serialiseAgeChronicleCellNote(row) {
+  return {
+    authorDisplayName: row.authorDisplayName ?? row.authorHandle ?? '未知用户',
+    authorUserId: row.authorUserId,
+    body: row.body,
+    createdAt: row.createdAt,
+    entryId: row.entryId,
+    profileId: row.profileId,
+    updatedAt: row.updatedAt,
+  }
+}
+
+function createAgeChronicleEntryId() {
+  return `chronicle_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
+}
+
+function extractAgeChronicleStructureFromCompatState(input) {
+  if (input && typeof input === 'object' && 'characterProfiles' in input) {
+    return sanitiseAgeChronicleStructure(input)
+  }
+
+  const legacyState = sanitiseAgeChronicleState(input)
+
+  if (!legacyState) {
+    return null
+  }
+
+  return {
+    characterProfiles: legacyState.characterProfiles,
+    nextCharacterIndex: legacyState.nextCharacterIndex,
+  }
+}
+
+function upsertAgeChronicleStructure(worldviewName, structure, updatedByUserId, updatedAt = Date.now()) {
+  statementUpsertAgeChronicleStructure.run({
+    structureJson: JSON.stringify(structure),
+    updatedAt,
+    updatedByUserId,
+    worldviewName,
+  })
+}
+
+function getAgeChronicleStructure(worldviewName) {
+  const row = statementSelectAgeChronicleStructure.get(worldviewName)
+
+  if (!row) {
+    return createDefaultAgeChronicleStructure()
+  }
+
+  try {
+    return sanitiseAgeChronicleStructure(JSON.parse(row.structureJson)) ?? createDefaultAgeChronicleStructure()
+  } catch {
+    return createDefaultAgeChronicleStructure()
+  }
+}
+
+function seedDefaultAgeChronicleWorldview(worldviewName) {
+  const now = Date.now()
+  const structure = createDefaultAgeChronicleStructure()
+
+  upsertAgeChronicleStructure(worldviewName, structure, ADMIN_USER.id, now)
+
+  for (const entry of createDefaultAgeChronicleEntries(ADMIN_USER.id, now)) {
+    statementInsertAgeChronicleEntry.run({
+      ...entry,
+      worldviewName,
+    })
+  }
+}
+
+function migrateLegacyAgeChronicleWorldview(worldviewName, row) {
+  let legacyState = null
+
+  try {
+    legacyState = sanitiseAgeChronicleState(JSON.parse(row.stateJson))
+  } catch {
+    legacyState = null
+  }
+
+  if (!legacyState) {
+    seedDefaultAgeChronicleWorldview(worldviewName)
+    return
+  }
+
+  const ownerUserId = row.updatedByUserId ?? ADMIN_USER.id
+  const updatedAt = row.updatedAt ?? Date.now()
+
+  upsertAgeChronicleStructure(
+    worldviewName,
+    {
+      characterProfiles: legacyState.characterProfiles,
+      nextCharacterIndex: legacyState.nextCharacterIndex,
+    },
+    ownerUserId,
+    updatedAt,
+  )
+
+  for (const entry of legacyState.chronicleEntries) {
+    statementInsertAgeChronicleEntry.run({
+      createdAt: updatedAt,
+      createdByUserId: ownerUserId,
+      id: entry.id,
+      label: entry.label,
+      note: entry.note,
+      updatedAt,
+      visibility: AGE_CHRONICLE_VISIBILITY_PUBLIC,
+      worldviewName,
+      year: entry.year,
+    })
+  }
+
+  for (const [key, body] of Object.entries(legacyState.cellDescriptions)) {
+    const [profileId, entryId] = key.split('::')
+
+    if (profileId === '' || entryId === '' || body.trim() === '') {
+      continue
+    }
+
+    statementUpsertAgeChronicleCellNote.run({
+      authorUserId: ADMIN_USER.id,
+      body,
+      createdAt: updatedAt,
+      entryId,
+      profileId,
+      updatedAt,
+      worldviewName,
+    })
+  }
+}
+
+function ensureAgeChronicleWorldviewInitialised(worldviewName) {
+  const hasEntries = Number(statementCountAgeChronicleEntriesForWorldview.get(worldviewName)?.count ?? 0) > 0
+  const hasStructure = Boolean(statementSelectAgeChronicleStructure.get(worldviewName))
+
+  if (hasEntries || hasStructure) {
+    if (!hasStructure) {
+      upsertAgeChronicleStructure(
+        worldviewName,
+        createDefaultAgeChronicleStructure(),
+        ADMIN_USER.id,
+        Date.now(),
+      )
+    }
+    return
+  }
+
+  const legacyRow = statementSelectAgeChronicleState.get(worldviewName)
+
+  if (legacyRow) {
+    migrateLegacyAgeChronicleWorldview(worldviewName, legacyRow)
+    return
+  }
+
+  seedDefaultAgeChronicleWorldview(worldviewName)
+}
+
+function isAgeChronicleEntryVisibleToUser(entry, userId) {
+  if (entry.visibility === AGE_CHRONICLE_VISIBILITY_PUBLIC) {
+    return true
+  }
+
+  if (userId && isAdminUser(userId)) {
+    return true
+  }
+
+  return Boolean(userId) && entry.createdByUserId === userId
+}
+
+function buildAgeChronicleCapabilities(authContext) {
+  const isAdmin = authContext?.user.role === 'admin'
+  const isAuthenticated = Boolean(authContext?.user)
+
+  return {
+    canCreateEntry: isAuthenticated,
+    canEditOwnCellNote: isAuthenticated,
+    canEditSharedStructure: isAdmin,
+    canManageEntry: isAdmin,
+  }
+}
+
+function buildAgeChronicleStateForViewer(worldviewName, authContext) {
+  ensureAgeChronicleWorldviewInitialised(worldviewName)
+
+  const structureRow = statementSelectAgeChronicleStructure.get(worldviewName)
+  const structure = getAgeChronicleStructure(worldviewName)
+  const allEntries = statementSelectAgeChronicleEntriesForWorldview
+    .all(worldviewName)
+    .map(serialiseAgeChronicleEntry)
+  const viewerUserId = authContext?.user.id ?? ''
+  const visibleEntries = allEntries.filter((entry) => isAgeChronicleEntryVisibleToUser(entry, viewerUserId))
+  const visibleEntryIds = new Set(visibleEntries.map((entry) => entry.id))
+  const validProfileIds = new Set(structure.characterProfiles.map((profile) => profile.id))
+  const ownCellDescriptions = {}
+  const adminCellNotes = {}
+  const isAdmin = viewerUserId !== '' && isAdminUser(viewerUserId)
+
+  for (const noteRow of statementSelectAgeChronicleCellNotesForWorldview.all(worldviewName)) {
+    const note = serialiseAgeChronicleCellNote(noteRow)
+
+    if (!visibleEntryIds.has(note.entryId) || !validProfileIds.has(note.profileId)) {
+      continue
+    }
+
+    const key = `${note.profileId}::${note.entryId}`
+
+    if (note.authorUserId === viewerUserId) {
+      ownCellDescriptions[key] = note.body
+    }
+
+    if (isAdmin) {
+      if (!adminCellNotes[key]) {
+        adminCellNotes[key] = []
+      }
+
+      adminCellNotes[key].push({
+        authorDisplayName: note.authorDisplayName,
+        authorUserId: note.authorUserId,
+        body: note.body,
+        updatedAt: note.updatedAt,
+      })
+    }
+  }
+
+  return {
+    capabilities: buildAgeChronicleCapabilities(authContext),
+    state: {
+      adminCellNotes,
+      characterProfiles: structure.characterProfiles,
+      chronicleEntries: visibleEntries,
+      nextCharacterIndex: structure.nextCharacterIndex,
+      ownCellDescriptions,
+    },
+    updatedAt: Math.max(
+      ...visibleEntries.map((entry) => entry.updatedAt),
+      Number(structureRow?.updatedAt ?? 0),
     ),
   }
 }
@@ -3111,40 +3702,50 @@ function handleLogout(request, response) {
   )
 }
 
-function handleAgeChronicleStateGet(request, response, requestUrl) {
+function buildAgeChronicleResponseHeaders(request, authContext, headers) {
+  return authContext?.shouldRefreshCookie
+    ? {
+        ...headers,
+        'Set-Cookie': buildSetCookieHeader(
+          request,
+          authContext.sessionToken,
+          Math.floor(AUTH_SESSION_TTL_MS / 1000),
+        ),
+      }
+    : headers
+}
+
+function writeAgeChronicleViewerState(response, request, worldviewName, authContext, statusCode = 200) {
   const headers = appendCorsHeaders(request)
-  const worldviewName = sanitiseAgeChronicleWorldview(requestUrl.searchParams.get('worldview'))
-
-  if (worldviewName === '') {
-    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
-    return
-  }
-
-  const row = statementSelectAgeChronicleState.get(worldviewName)
-
-  if (!row) {
-    writeJson(response, 200, { ok: true, state: null }, { headers })
-    return
-  }
-
-  let state = null
-
-  try {
-    state = sanitiseAgeChronicleState(JSON.parse(row.stateJson))
-  } catch {
-    state = null
-  }
+  const viewerState = buildAgeChronicleStateForViewer(worldviewName, authContext)
 
   writeJson(
     response,
-    200,
+    statusCode,
     {
+      authenticated: Boolean(authContext?.user),
+      capabilities: viewerState.capabilities,
+      currentUser: authContext?.user ?? null,
       ok: true,
-      state,
-      updatedAt: row.updatedAt,
+      state: viewerState.state,
+      updatedAt: viewerState.updatedAt,
     },
-    { headers },
+    {
+      headers: buildAgeChronicleResponseHeaders(request, authContext, headers),
+    },
   )
+}
+
+function handleAgeChronicleStateGet(request, response, requestUrl) {
+  const worldviewName = sanitiseAgeChronicleWorldview(requestUrl.searchParams.get('worldview'))
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers: appendCorsHeaders(request) })
+    return
+  }
+
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  writeAgeChronicleViewerState(response, request, worldviewName, authContext)
 }
 
 async function handleAgeChronicleStateSave(request, response) {
@@ -3156,6 +3757,11 @@ async function handleAgeChronicleStateSave(request, response) {
     return
   }
 
+  if (!isAdminUser(authContext.user.id)) {
+    writeJson(response, 403, { message: '只有管理员可以维护共享结构。', ok: false }, { headers })
+    return
+  }
+
   let body
 
   try {
@@ -3164,54 +3770,226 @@ async function handleAgeChronicleStateSave(request, response) {
     const message =
       error instanceof Error && error.message === 'BODY_TOO_LARGE'
         ? '共享编年内容过大，请删减后再试。'
-        : '请求体格式无效。'
+      : '请求体格式无效。'
     writeJson(response, 400, { message, ok: false }, { headers })
     return
   }
 
   const worldviewName = sanitiseAgeChronicleWorldview(body?.worldview)
-  const state = sanitiseAgeChronicleState(body?.state)
+  const structure = sanitiseAgeChronicleStructure(body?.structure) ?? extractAgeChronicleStructureFromCompatState(body?.state)
 
   if (worldviewName === '') {
     writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
     return
   }
 
-  if (!state) {
-    writeJson(response, 400, { message: '共享编年数据无效。', ok: false }, { headers })
+  if (!structure) {
+    writeJson(response, 400, { message: '共享编年结构数据无效。', ok: false }, { headers })
     return
   }
 
   const updatedAt = Date.now()
 
-  statementUpsertAgeChronicleState.run({
-    stateJson: JSON.stringify(state),
-    updatedAt,
-    updatedByUserId: authContext.user.id,
+  ensureAgeChronicleWorldviewInitialised(worldviewName)
+  upsertAgeChronicleStructure(worldviewName, structure, authContext.user.id, updatedAt)
+  writeAgeChronicleViewerState(response, request, worldviewName, authContext)
+}
+
+async function handleAgeChronicleEntryCreate(request, response) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '创建编年节点需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 16 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '编年节点内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseAgeChronicleWorldview(body?.worldview)
+  const label = sanitiseAgeChronicleShortText(body?.label, AGE_CHRONICLE_MAX_LABEL_LENGTH)
+  const note = sanitiseAgeChronicleLongText(body?.note, AGE_CHRONICLE_MAX_NOTE_LENGTH)
+  const year = normaliseAgeChronicleNumber(body?.year, 0)
+  const visibility = normaliseAgeChronicleVisibility(body?.visibility)
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
+    return
+  }
+
+  if (!Number.isFinite(year)) {
+    writeJson(response, 400, { message: '编年值无效。', ok: false }, { headers })
+    return
+  }
+
+  ensureAgeChronicleWorldviewInitialised(worldviewName)
+
+  const now = Date.now()
+  statementInsertAgeChronicleEntry.run({
+    createdAt: now,
+    createdByUserId: authContext.user.id,
+    id: createAgeChronicleEntryId(),
+    label: label === '' ? `新编年 ${year}` : label,
+    note,
+    updatedAt: now,
+    visibility,
+    worldviewName,
+    year,
+  })
+
+  writeAgeChronicleViewerState(response, request, worldviewName, authContext)
+}
+
+async function handleAgeChronicleEntryUpdate(request, response, entryId) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '更新编年节点需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  if (!isAdminUser(authContext.user.id)) {
+    writeJson(response, 403, { message: '只有管理员可以管理编年节点。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 16 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '编年节点内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseAgeChronicleWorldview(body?.worldview)
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
+    return
+  }
+
+  ensureAgeChronicleWorldviewInitialised(worldviewName)
+  const entry = statementSelectAgeChronicleEntry.get(worldviewName, entryId)
+
+  if (!entry) {
+    writeJson(response, 404, { message: '目标编年节点不存在。', ok: false }, { headers })
+    return
+  }
+
+  if (body?.delete === true) {
+    statementDeleteAgeChronicleCellNotesForEntry.run(worldviewName, entryId)
+    statementDeleteAgeChronicleEntry.run(worldviewName, entryId)
+    writeAgeChronicleViewerState(response, request, worldviewName, authContext)
+    return
+  }
+
+  const year = normaliseAgeChronicleNumber(body?.year, entry.year)
+  const label = sanitiseAgeChronicleShortText(body?.label, AGE_CHRONICLE_MAX_LABEL_LENGTH, entry.label)
+  const note = sanitiseAgeChronicleLongText(body?.note, AGE_CHRONICLE_MAX_NOTE_LENGTH)
+  const visibility = normaliseAgeChronicleVisibility(body?.visibility ?? entry.visibility)
+
+  statementUpdateAgeChronicleEntry.run({
+    id: entryId,
+    label,
+    note,
+    updatedAt: Date.now(),
+    visibility,
+    worldviewName,
+    year,
+  })
+
+  writeAgeChronicleViewerState(response, request, worldviewName, authContext)
+}
+
+async function handleAgeChronicleCellNoteSave(request, response) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '保存年度备注需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 16 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '年度备注内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseAgeChronicleWorldview(body?.worldview)
+  const profileId = sanitiseAgeChronicleShortText(body?.profileId, 96)
+  const entryId = sanitiseAgeChronicleShortText(body?.entryId, 96)
+  const noteBody = sanitiseAgeChronicleLongText(body?.body, AGE_CHRONICLE_MAX_CELL_DESCRIPTION_LENGTH)
+
+  if (worldviewName === '' || profileId === '' || entryId === '') {
+    writeJson(response, 400, { message: '缺少必要的备注定位信息。', ok: false }, { headers })
+    return
+  }
+
+  ensureAgeChronicleWorldviewInitialised(worldviewName)
+  const entry = statementSelectAgeChronicleEntry.get(worldviewName, entryId)
+
+  if (!entry || !isAgeChronicleEntryVisibleToUser(serialiseAgeChronicleEntry(entry), authContext.user.id)) {
+    writeJson(response, 404, { message: '目标编年节点不存在。', ok: false }, { headers })
+    return
+  }
+
+  const structure = getAgeChronicleStructure(worldviewName)
+
+  if (!structure.characterProfiles.some((profile) => profile.id === profileId)) {
+    writeJson(response, 404, { message: '目标角色不存在。', ok: false }, { headers })
+    return
+  }
+
+  if (noteBody === '') {
+    statementDeleteAgeChronicleCellNote.run(worldviewName, profileId, entryId, authContext.user.id)
+    writeAgeChronicleViewerState(response, request, worldviewName, authContext)
+    return
+  }
+
+  const existingNote = statementSelectAgeChronicleCellNote.get(
+    worldviewName,
+    profileId,
+    entryId,
+    authContext.user.id,
+  )
+  const now = Date.now()
+
+  statementUpsertAgeChronicleCellNote.run({
+    authorUserId: authContext.user.id,
+    body: noteBody,
+    createdAt: existingNote?.createdAt ?? now,
+    entryId,
+    profileId,
+    updatedAt: now,
     worldviewName,
   })
 
-  writeJson(
-    response,
-    200,
-    {
-      ok: true,
-      state,
-      updatedAt,
-    },
-    {
-      headers: authContext.shouldRefreshCookie
-        ? {
-            ...headers,
-            'Set-Cookie': buildSetCookieHeader(
-              request,
-              authContext.sessionToken,
-              Math.floor(AUTH_SESSION_TTL_MS / 1000),
-            ),
-          }
-        : headers,
-    },
-  )
+  writeAgeChronicleViewerState(response, request, worldviewName, authContext)
 }
 
 const server = http.createServer((request, response) => {
@@ -3250,9 +4028,32 @@ const server = http.createServer((request, response) => {
     return
   }
 
+  if (request.method === 'POST' && requestUrl.pathname === '/api/age-chronicle/entries') {
+    void handleAgeChronicleEntryCreate(request, response)
+    return
+  }
+
+  if (request.method === 'PUT' && requestUrl.pathname === '/api/age-chronicle/cell-note') {
+    void handleAgeChronicleCellNoteSave(request, response)
+    return
+  }
+
+  const ageChronicleEntryMatch = /^\/api\/age-chronicle\/entries\/([^/]+)$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PATCH' && ageChronicleEntryMatch) {
+    void handleAgeChronicleEntryUpdate(
+      request,
+      response,
+      decodeURIComponent(ageChronicleEntryMatch[1]),
+    )
+    return
+  }
+
   if (requestUrl.pathname === '/') {
     writeJson(response, 200, {
       endpoints: {
+        ageChronicleCellNote: '/api/age-chronicle/cell-note',
+        ageChronicleEntries: '/api/age-chronicle/entries',
         ageChronicleState: '/api/age-chronicle/state',
         authAccessKey: '/api/auth/access-key',
         authMe: '/api/auth/me',

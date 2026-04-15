@@ -1076,6 +1076,26 @@
     return [...messagesBySequence.values()].sort((left, right) => left.sequence - right.sequence)
   }
 
+  function applyUpdatedMessage(nextMessage: ChatMessage): void {
+    let hasMatched = false
+
+    messages = messages.map((message) => {
+      if (message.id !== nextMessage.id) {
+        return message
+      }
+
+      hasMatched = true
+      syncInteractiveMessageState(nextMessage)
+      return nextMessage
+    })
+
+    if (!hasMatched) {
+      return
+    }
+
+    messages = [...messages].sort((left, right) => left.sequence - right.sequence)
+  }
+
   async function replaceMessages(incoming: ChatMessage[]): Promise<void> {
     messages = normaliseMessages(incoming)
     unreadIncomingCount = 0
@@ -1243,18 +1263,18 @@
   }
 
   function handleWindowClick(event: MouseEvent): void {
-    if (!isCharacterMenuOpen || !characterMenuElement) {
-      return
-    }
-
     const target = event.target
 
     if (!(target instanceof Node)) {
       return
     }
 
-    if (!characterMenuElement.contains(target)) {
+    if (isCharacterMenuOpen && characterMenuElement && !characterMenuElement.contains(target)) {
       isCharacterMenuOpen = false
+    }
+
+    if (messageActionMenuMessage && messageActionMenuElement && !messageActionMenuElement.contains(target)) {
+      closeMessageActionMenu()
     }
   }
 
@@ -1412,6 +1432,11 @@
       return
     }
 
+    if (payload.type === 'message_updated') {
+      applyUpdatedMessage(payload.message)
+      return
+    }
+
     if (payload.type === 'presence') {
       if (payload.roomId === room.id) {
         members = payload.members
@@ -1474,7 +1499,7 @@
       if (socket?.readyState === WebSocket.OPEN && room.id !== '') {
         connectionState = 'connected'
       }
-      createRoomError = payload.message
+      createRoomError = 'message' in payload ? payload.message : '操作失败，请稍后再试。'
       return
     }
 
@@ -1482,7 +1507,7 @@
       if (socket?.readyState === WebSocket.OPEN && room.id !== '') {
         connectionState = 'connected'
       }
-      createCharacterError = payload.message
+      createCharacterError = 'message' in payload ? payload.message : '操作失败，请稍后再试。'
       closeCharacterEditorOnNextState = false
       return
     }
@@ -1491,7 +1516,7 @@
       if (socket?.readyState === WebSocket.OPEN && room.id !== '') {
         connectionState = 'connected'
       }
-      editCharacterError = payload.message
+      editCharacterError = 'message' in payload ? payload.message : '操作失败，请稍后再试。'
       closeCharacterEditorOnNextState = false
       return
     }
@@ -1500,14 +1525,14 @@
       if (socket?.readyState === WebSocket.OPEN && room.id !== '') {
         connectionState = 'connected'
       }
-      roomPermissionsError = payload.message
+      roomPermissionsError = 'message' in payload ? payload.message : '操作失败，请稍后再试。'
       return
     }
 
     if (socket?.readyState === WebSocket.OPEN && room.id !== '') {
       connectionState = 'connected'
     }
-    connectionError = payload.message
+    connectionError = 'message' in payload ? payload.message : '群聊返回了未处理的更新。'
   }
 
   async function connectToChat(isReconnect = false): Promise<void> {
@@ -1636,6 +1661,7 @@
   }
 
   function toggleCharacterMenu(): void {
+    closeMessageActionMenu()
     isCharacterMenuOpen = !isCharacterMenuOpen
   }
 
@@ -1686,6 +1712,7 @@
     }
 
     isCharacterMenuOpen = false
+    closeMessageActionMenu()
 
     socket.send(
       JSON.stringify({
@@ -1711,12 +1738,14 @@
     socket.send(
       JSON.stringify({
         body: messageBody,
+        replyToMessageId: replyTarget?.id ?? null,
         roomId: room.id,
         type: 'send_message',
       }),
     )
 
     draftMessage = ''
+    clearReplyTarget()
     connectionError = ''
     await scrollMessagesToBottom()
   }
@@ -2169,12 +2198,28 @@
 
                         <div class="chat-message-bubble-list">
                           {#each item.messages as message (message.sequence)}
-                            <div class:chat-dice-bubble={message.kind === 'dice'} class="chat-message-bubble">
+                            <button
+                              class:chat-dice-bubble={message.kind === 'dice'}
+                              class:chat-message-bubble-revoked={isMessageRevoked(message)}
+                              class="chat-message-bubble"
+                              type="button"
+                              oncontextmenu={(event) => handleMessageBubbleContextMenu(message, event)}
+                              onpointercancel={handleMessageBubblePointerEnd}
+                              onpointerdown={(event) => handleMessageBubblePointerDown(message, event)}
+                              onpointermove={handleMessageBubblePointerMove}
+                              onpointerup={handleMessageBubblePointerEnd}
+                            >
+                              {#if hasMessageReplyPreview(message)}
+                                <div class="chat-message-reply-preview">
+                                  <strong>{getMessageReplySpeakerName(message)}</strong>
+                                  <span>{getMessageReplyPreviewBody(message)}</span>
+                                </div>
+                              {/if}
                               {#if message.kind === 'dice'}
                                 <span class="chat-message-kind">检定结果</span>
                               {/if}
-                              <p use:autoIndentMessage class="chat-message-text">{message.body}</p>
-                            </div>
+                              <p use:autoIndentMessage class="chat-message-text">{getMessageBubbleBody(message)}</p>
+                            </button>
                           {/each}
                         </div>
                       </div>
@@ -2254,8 +2299,19 @@
               {/if}
             </div>
 
+            {#if replyTarget}
+              <div class="chat-composer-reply-chip">
+                <div>
+                  <strong>回复 {getMessageSpeakerName(replyTarget)}</strong>
+                  <span>{getMessageBubbleBody(replyTarget)}</span>
+                </div>
+                <button aria-label="取消引用回复" type="button" onclick={clearReplyTarget}>×</button>
+              </div>
+            {/if}
+
             <label class="chat-composer-field">
               <textarea
+                bind:this={composerTextareaElement}
                 bind:value={draftMessage}
                 maxlength={CHAT_MAX_MESSAGE_LENGTH}
                 onkeydown={handleComposerKeydown}
@@ -2302,6 +2358,24 @@
       </aside>
     </div>
   </section>
+
+  {#if messageActionMenuMessage}
+    <div
+      bind:this={messageActionMenuElement}
+      class="chat-message-action-menu"
+      role="menu"
+      style={`left:${messageActionMenuX}px; top:${messageActionMenuY}px;`}
+    >
+      <button role="menuitem" type="button" onclick={() => quoteReplyToMessage(messageActionMenuMessage!)}>
+        引用回复
+      </button>
+      {#if canRevokeMessage(messageActionMenuMessage)}
+        <button role="menuitem" type="button" onclick={() => revokeMessage(messageActionMenuMessage!)}>
+          撤回消息
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   <div class="pointer-events-none fixed bottom-4 right-4 z-30 flex flex-col items-end gap-3 md:bottom-6 md:right-6">
     {#if connectionError !== ''}
