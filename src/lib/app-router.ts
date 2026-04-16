@@ -1,6 +1,7 @@
 export type AppPage =
   | 'home'
   | 'timeline'
+  | 'vertical-timeline'
   | 'age-chronicle'
   | 'log-workbench'
   | 'chat-room'
@@ -47,6 +48,14 @@ export function parseAppRoute(url: URL | Location): AppRoute {
       eventId: '',
       page: 'timeline',
       worldviewName,
+    }
+  }
+
+  if (pathname === '/vertical-timeline') {
+    return {
+      eventId: '',
+      page: 'vertical-timeline',
+      worldviewName: null,
     }
   }
 
@@ -100,6 +109,8 @@ export function buildAppRouteHref(route: {
 
   if (route.page === 'timeline') {
     pathname = '/timeline'
+  } else if (route.page === 'vertical-timeline') {
+    pathname = '/vertical-timeline'
   } else if (route.page === 'age-chronicle') {
     pathname = '/chronicle'
   } else if (route.page === 'log-workbench') {
@@ -114,7 +125,7 @@ export function buildAppRouteHref(route: {
   const searchParams = new URLSearchParams()
   const worldviewName = decodeWorldviewName(route.worldviewName ?? null)
 
-  if (!['home', 'chat-room'].includes(route.page) && worldviewName) {
+  if (!['home', 'chat-room', 'vertical-timeline'].includes(route.page) && worldviewName) {
     searchParams.set('worldview', worldviewName)
   }
 

@@ -1,0 +1,269 @@
+import type { TimelineEvent } from './timeline'
+
+export interface VerticalTimelineLane {
+  bubbleBorderClass: string
+  bubbleClass: string
+  id: string
+  name: string
+  textClass: string
+  tintClass: string
+}
+
+export interface VerticalTimelineBubble {
+  id: string
+  title: string
+}
+
+export interface VerticalTimelineEventRecord extends TimelineEvent {}
+
+export interface VerticalTimelineDayNode {
+  bubblesByLane: Record<string, VerticalTimelineBubble | null>
+  id: string
+  label: string
+}
+
+export interface VerticalTimelineMonthNode {
+  bubblesByLane: Record<string, VerticalTimelineBubble | null>
+  days: VerticalTimelineDayNode[]
+  id: string
+  label: string
+}
+
+export interface VerticalTimelineYearNode {
+  bubblesByLane: Record<string, VerticalTimelineBubble | null>
+  id: string
+  label: string
+  months: VerticalTimelineMonthNode[]
+}
+
+export const verticalTimelineSampleLanes: VerticalTimelineLane[] = [
+  {
+    bubbleBorderClass: 'border-amber-200/90',
+    bubbleClass: 'bg-amber-100 text-amber-950',
+    id: 'bangyi',
+    name: '邦伊',
+    textClass: 'text-amber-900',
+    tintClass: 'bg-amber-50/70',
+  },
+  {
+    bubbleBorderClass: 'border-stone-300/90',
+    bubbleClass: 'bg-stone-200 text-stone-900',
+    id: 'liuzhizhou',
+    name: '柳之舟',
+    textClass: 'text-stone-900',
+    tintClass: 'bg-stone-50/80',
+  },
+  {
+    bubbleBorderClass: 'border-slate-300/90',
+    bubbleClass: 'bg-slate-200 text-slate-900',
+    id: 'liuzhixing',
+    name: '柳之行',
+    textClass: 'text-slate-900',
+    tintClass: 'bg-slate-50/85',
+  },
+]
+
+export const verticalTimelineSampleYears: VerticalTimelineYearNode[] = [
+  {
+    id: 'year-165',
+    label: '165',
+    bubblesByLane: {
+      bangyi: { id: 'b-165-entry', title: '第一次踏进偏馆' },
+      liuzhizhou: null,
+      liuzhixing: { id: 'x-165-entry', title: '替人抄完那本旧账册' },
+    },
+    months: [],
+  },
+  {
+    id: 'year-171',
+    label: '171',
+    bubblesByLane: {
+      bangyi: { id: 'b-171-entry', title: '从东码头收回一封湿信' },
+      liuzhizhou: null,
+      liuzhixing: null,
+    },
+    months: [
+      {
+        id: 'month-171-2',
+        label: '171.2',
+        bubblesByLane: {
+          bangyi: null,
+          liuzhizhou: { id: 'z-171-2-entry', title: '在灰塔楼下看见同一盏灯' },
+          liuzhixing: { id: 'x-171-2-entry', title: '替馆中长辈送一纸回帖' },
+        },
+        days: [],
+      },
+      {
+        id: 'month-171-12',
+        label: '171.12',
+        bubblesByLane: {
+          bangyi: null,
+          liuzhizhou: null,
+          liuzhixing: { id: 'x-171-12-entry', title: '在偏廊把灯芯重新剪短' },
+        },
+        days: [
+          {
+            id: 'day-171-12-8-a',
+            label: '171.12.8',
+            bubblesByLane: {
+              bangyi: { id: 'b-171-12-8-a', title: '半夜把伞忘在回廊' },
+              liuzhizhou: { id: 'z-171-12-8-a', title: '抄录墙上只剩半句的题记' },
+              liuzhixing: { id: 'x-171-12-8-a', title: '雨里把门闩重新换过' },
+            },
+          },
+          {
+            id: 'day-171-12-8-b',
+            label: '171.12.8',
+            bubblesByLane: {
+              bangyi: { id: 'b-171-12-8-b', title: '把藏在袖中的铜钥匙交出去' },
+              liuzhizhou: { id: 'z-171-12-8-b', title: '对着蓝灯照出纸页暗纹' },
+              liuzhixing: null,
+            },
+          },
+          {
+            id: 'day-171-12-11',
+            label: '171.12.11',
+            bubblesByLane: {
+              bangyi: null,
+              liuzhizhou: { id: 'z-171-12-11', title: '在塔顶记下第三次钟声延迟' },
+              liuzhixing: { id: 'x-171-12-11', title: '从风里听见有人叫旧名' },
+            },
+          },
+        ],
+      },
+    ],
+  },
+]
+
+export const verticalTimelineSampleEvents: VerticalTimelineEventRecord[] = [
+  {
+    body: '那天偏馆的窗纸被雨水打得发软，邦伊站在门口听了很久，才意识到里头并没有人翻书，却一直有纸页被掀动的声音。',
+    endTime: 165,
+    id: 'b-165-entry',
+    startTime: 165,
+    summary: '邦伊第一次踏进偏馆时，听见了不属于任何人的翻页声。',
+    tags: ['#偏馆', '#初访'],
+    title: '第一次踏进偏馆',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '柳之行把那本旧账册抄到最后一页时，才发现原件比抄本多出一行极浅的红字，像被谁刻意藏进纸纹里。',
+    endTime: 165,
+    id: 'x-165-entry',
+    startTime: 165,
+    summary: '旧账册最后一页多出了一行只在特定角度下才能看到的红字。',
+    tags: ['#旧账册', '#柳之行'],
+    title: '替人抄完那本旧账册',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '信封的边角全被海水泡开了，只有蜡封还勉强维持原样。邦伊把它带回来的时候，袖口也全是湿的。',
+    endTime: 171,
+    id: 'b-171-entry',
+    startTime: 171,
+    summary: '邦伊从东码头收回一封被海水浸透的旧信，蜡封上还沾着盐粒。',
+    tags: ['#东码头', '#湿信'],
+    title: '从东码头收回一封湿信',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '灰塔楼下的灯原本该在子夜后熄灭，可柳之舟连续三晚经过时都看见它亮着，像故意在等谁回来。',
+    endTime: 1712,
+    id: 'z-171-2-entry',
+    startTime: 1712,
+    summary: '灰塔楼下那盏本应熄灭的灯，连续几夜都在同一时刻亮着。',
+    tags: ['#灰塔楼', '#夜灯'],
+    title: '在灰塔楼下看见同一盏灯',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '那封回帖写得极克制，只在结尾多添了一句“风大，勿夜行”。送到时，柳之行注意到门内的人看见这句时明显停了一下。',
+    endTime: 1712,
+    id: 'x-171-2-entry',
+    startTime: 1712,
+    summary: '一纸回帖在结尾多添了一句劝阻夜行的话，像在暗示什么。',
+    tags: ['#回帖', '#偏馆'],
+    title: '替馆中长辈送一纸回帖',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '偏廊尽头的蓝灯总烧得太急，柳之行把灯芯剪短后，那束光终于不再一阵明一阵暗，像暂时安静了下来。',
+    endTime: 17112,
+    id: 'x-171-12-entry',
+    startTime: 17112,
+    summary: '柳之行重新修整偏廊蓝灯的灯芯，让忽明忽暗的火终于稳定下来。',
+    tags: ['#蓝灯', '#偏廊'],
+    title: '在偏廊把灯芯重新剪短',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '那把伞原本只是临时搁在回廊，等邦伊回去取的时候，伞骨上却多了一根不属于它的银丝。',
+    endTime: 1711208,
+    id: 'b-171-12-8-a',
+    startTime: 1711208,
+    summary: '邦伊半夜回廊落伞，折返时发现伞骨上多出一根细银丝。',
+    tags: ['#回廊', '#夜雨'],
+    title: '半夜把伞忘在回廊',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '墙上的题记只剩半句，前半句像被人用湿布擦掉了。柳之舟照着抄时，笔尖三次在同一处打滑。',
+    endTime: 1711208,
+    id: 'z-171-12-8-a',
+    startTime: 1711208,
+    summary: '柳之舟抄录回廊墙上的残句题记，却总在同一位置打滑。',
+    tags: ['#题记', '#抄录'],
+    title: '抄录墙上只剩半句的题记',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '那天的雨太横，门闩老是卡不稳。柳之行索性把旧门闩拆了重装，结果在木槽里撬出一小片刻着年份的铜牌。',
+    endTime: 1711208,
+    id: 'x-171-12-8-a',
+    startTime: 1711208,
+    summary: '柳之行雨夜重装门闩时，从木槽里撬出一片刻着旧年份的铜牌。',
+    tags: ['#门闩', '#铜牌'],
+    title: '雨里把门闩重新换过',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '铜钥匙一直藏在袖中，直到真正交出去那一刻，邦伊才意识到它比看上去要冷得多，像刚从井水里拿出来。',
+    endTime: 1711208,
+    id: 'b-171-12-8-b',
+    startTime: 1711208,
+    summary: '邦伊把藏在袖中的铜钥匙交出时，才发现它冷得不合常理。',
+    tags: ['#铜钥匙', '#交付'],
+    title: '把藏在袖中的铜钥匙交出去',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '蓝灯斜照在纸页边缘，暗纹像潮水一样慢慢浮起。柳之舟认出那不是普通水印，而是一张被重新缝进纸里的旧地图。',
+    endTime: 1711208,
+    id: 'z-171-12-8-b',
+    startTime: 1711208,
+    summary: '柳之舟借蓝灯照出纸页暗纹，发现纸里藏着一张旧地图。',
+    tags: ['#暗纹', '#旧地图'],
+    title: '对着蓝灯照出纸页暗纹',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '那夜的第三次钟声比往常慢了半拍。柳之舟记下时间后，抬头看见塔檐下原本静止的铜铃全都朝同一个方向轻轻转过去。',
+    endTime: 1711211,
+    id: 'z-171-12-11',
+    startTime: 1711211,
+    summary: '塔顶第三次钟声延迟半拍，铜铃也在无风中齐齐转向。',
+    tags: ['#塔顶', '#钟声'],
+    title: '在塔顶记下第三次钟声延迟',
+    worldview: '垂直时间轴演示',
+  },
+  {
+    body: '风里那声旧名像是贴着耳后吹过来的，轻得几乎以为是错觉。可柳之行停下脚步后，回廊尽头那盏灯也跟着暗了一瞬。',
+    endTime: 1711211,
+    id: 'x-171-12-11',
+    startTime: 1711211,
+    summary: '柳之行在风里听见有人唤旧名，而回廊尽头的灯随之暗了一瞬。',
+    tags: ['#旧名', '#回廊'],
+    title: '从风里听见有人叫旧名',
+    worldview: '垂直时间轴演示',
+  },
+]

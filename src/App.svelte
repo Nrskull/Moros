@@ -14,6 +14,7 @@
   import LogWorkbenchPage from './lib/LogWorkbenchPage.svelte'
   import TimelineAxis from './lib/TimelineAxis.svelte'
   import TimelineEventCard from './lib/TimelineEventCard.svelte'
+  import VerticalTimelinePage from './lib/VerticalTimelinePage.svelte'
   import WorldviewHero from './lib/WorldviewHero.svelte'
   import { mockEvents } from './lib/mock-events'
   import { seaFogIn, seaFogOut } from './lib/transitions'
@@ -98,6 +99,7 @@
   const chatNavPages: Array<{ label: string; page: AppPage }> = [
     { page: 'home', label: '首页' },
     { page: 'timeline', label: '故事时间轴' },
+    { page: 'vertical-timeline', label: '垂直时间轴' },
     { page: 'age-chronicle', label: '角色年龄编年' },
     { page: 'log-workbench', label: '日志展示' },
     { page: 'chat-room', label: '群聊' },
@@ -855,7 +857,7 @@
   }
 
   function getRouteWorldviewName(targetPage: AppPage = activePage): string | null {
-    if (['home', 'chat-room'].includes(targetPage)) {
+    if (['home', 'chat-room', 'vertical-timeline'].includes(targetPage)) {
       return null
     }
 
@@ -915,7 +917,7 @@
       drawerMode = drawerMode === 'event' ? 'none' : drawerMode
     }
 
-    if (['home', 'chat-room'].includes(route.page)) {
+    if (['home', 'chat-room', 'vertical-timeline'].includes(route.page)) {
       isWorldviewMenuOpen = false
       isTagFilterOpen = false
     }
@@ -1124,7 +1126,7 @@
   }
   $: if (
     hasMountedRouter &&
-    !['home', 'chat-room'].includes(activePage) &&
+    !['home', 'chat-room', 'vertical-timeline'].includes(activePage) &&
     worldviewOptions.length > 0 &&
     routeWorldviewName !== selectedWorldview
   ) {
@@ -1595,6 +1597,14 @@
           故事时间轴
         </button>
         <button
+          class:is-current={activePage === 'vertical-timeline'}
+          class="page-switch"
+          type="button"
+          onclick={() => navigateToPage('vertical-timeline')}
+        >
+          垂直时间轴
+        </button>
+        <button
           class:is-current={activePage === 'age-chronicle'}
           class="page-switch"
           type="button"
@@ -1620,7 +1630,7 @@
         {/if}
       </nav>
 
-      {#if !['home', 'chat-room'].includes(activePage)}
+      {#if !['home', 'chat-room', 'vertical-timeline'].includes(activePage)}
         <div bind:this={worldviewMenuElement} class="worldview-dropdown">
         <button
           aria-expanded={isWorldviewMenuOpen}
@@ -2016,6 +2026,8 @@
         <option value={worldview}></option>
       {/each}
       </datalist>
+    {:else if activePage === 'vertical-timeline'}
+      <VerticalTimelinePage />
     {:else if activePage === 'age-chronicle'}
       <AgeChroniclePage
         worldviewDescription={activeWorldviewContent.description}

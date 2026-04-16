@@ -61,8 +61,8 @@
   export let worldviewThemeStyle = ''
   export let worldviewTransitionKey = 'default'
 
-  const SAMPLE_LOG_PATH = '/logs/test/sealdice-standard-log.json'
-  const SAMPLE_FILE_NAME = 'sealdice-standard-log.json'
+  const SAMPLE_LOG_PATH = '/logs/test/showcase-sample-log.json'
+  const SAMPLE_FILE_NAME = 'showcase-sample-log.json'
   const PAGE_SIZE_OPTIONS = [12, 24, 40]
 
   let fileInputElement: HTMLInputElement | null = null
