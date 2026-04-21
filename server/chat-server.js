@@ -5711,7 +5711,7 @@ async function handleAdminCharacterCardsCreate(request, response) {
   let body
 
   try {
-    body = await readJsonBody(request, 64 * 1024)
+    body = await readJsonBody(request, 512 * 1024)
   } catch (error) {
     const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
       ? '角色卡内容过大，请删减后再试。'
@@ -5752,7 +5752,7 @@ async function handleAdminCharacterCardUpdate(request, response, characterId) {
   let body
 
   try {
-    body = await readJsonBody(request, 64 * 1024)
+    body = await readJsonBody(request, 512 * 1024)
   } catch (error) {
     const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
       ? '角色卡内容过大，请删减后再试。'
@@ -6234,7 +6234,7 @@ async function handleVerticalTimelineEventCreate(request, response) {
   let body
 
   try {
-    body = await readJsonBody(request, 64 * 1024)
+    body = await readJsonBody(request, 512 * 1024)
   } catch (error) {
     const message =
       error instanceof Error && error.message === 'BODY_TOO_LARGE'
