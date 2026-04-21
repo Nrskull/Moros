@@ -6,6 +6,7 @@ export type AppPage =
   | 'log-workbench'
   | 'chat-room'
   | 'event-detail'
+  | 'admin-character'
 
 export interface AppRoute {
   eventId: string
@@ -46,7 +47,7 @@ export function parseAppRoute(url: URL | Location): AppRoute {
   if (pathname === '/timeline') {
     return {
       eventId: '',
-      page: 'timeline',
+      page: 'vertical-timeline',
       worldviewName,
     }
   }
@@ -55,7 +56,7 @@ export function parseAppRoute(url: URL | Location): AppRoute {
     return {
       eventId: '',
       page: 'vertical-timeline',
-      worldviewName: null,
+      worldviewName,
     }
   }
 
@@ -79,6 +80,14 @@ export function parseAppRoute(url: URL | Location): AppRoute {
     return {
       eventId: '',
       page: 'chat-room',
+      worldviewName: null,
+    }
+  }
+
+  if (pathname === '/admin/characters') {
+    return {
+      eventId: '',
+      page: 'admin-character',
       worldviewName: null,
     }
   }
@@ -108,7 +117,7 @@ export function buildAppRouteHref(route: {
   let pathname = '/'
 
   if (route.page === 'timeline') {
-    pathname = '/timeline'
+    pathname = '/vertical-timeline'
   } else if (route.page === 'vertical-timeline') {
     pathname = '/vertical-timeline'
   } else if (route.page === 'age-chronicle') {
@@ -117,15 +126,17 @@ export function buildAppRouteHref(route: {
     pathname = '/logs'
   } else if (route.page === 'chat-room') {
     pathname = '/chat'
+  } else if (route.page === 'admin-character') {
+    pathname = '/admin/characters'
   } else if (route.page === 'event-detail') {
     const safeEventId = String(route.eventId ?? '').trim()
-    pathname = safeEventId === '' ? '/timeline' : `/events/${encodeURIComponent(safeEventId)}`
+    pathname = safeEventId === '' ? '/vertical-timeline' : `/events/${encodeURIComponent(safeEventId)}`
   }
 
   const searchParams = new URLSearchParams()
   const worldviewName = decodeWorldviewName(route.worldviewName ?? null)
 
-  if (!['home', 'chat-room', 'vertical-timeline'].includes(route.page) && worldviewName) {
+  if (!['home', 'chat-room', 'admin-character'].includes(route.page) && worldviewName) {
     searchParams.set('worldview', worldviewName)
   }
 

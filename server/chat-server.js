@@ -100,6 +100,18 @@ const AGE_CHRONICLE_MAX_COLOR_LENGTH = 24
 const AGE_CHRONICLE_MAX_CELL_DESCRIPTION_LENGTH = 4000
 const AGE_CHRONICLE_VISIBILITY_PRIVATE = 'private'
 const AGE_CHRONICLE_VISIBILITY_PUBLIC = 'public'
+const VERTICAL_TIMELINE_MAX_WORLDVIEW_LENGTH = 80
+const VERTICAL_TIMELINE_MAX_LANE_COUNT = 40
+const VERTICAL_TIMELINE_MAX_EVENT_COUNT = 1200
+const VERTICAL_TIMELINE_MAX_YEAR_COUNT = 240
+const VERTICAL_TIMELINE_MAX_MONTH_COUNT = 1200
+const VERTICAL_TIMELINE_MAX_DAY_COUNT = 2400
+const VERTICAL_TIMELINE_MAX_LABEL_LENGTH = 80
+const VERTICAL_TIMELINE_MAX_SUMMARY_LENGTH = 240
+const VERTICAL_TIMELINE_MAX_BODY_LENGTH = 12000
+const VERTICAL_TIMELINE_MAX_TAG_COUNT = 24
+const VERTICAL_TIMELINE_MAX_TAG_LENGTH = 32
+const VERTICAL_TIMELINE_MAX_COLOR_LENGTH = 24
 const CHAT_PRESENTATION_BUBBLE = 'bubble'
 const CHAT_PRESENTATION_KP_NARRATION = 'kp-narration'
 const ADMIN_KP_CHARACTER_NAME = 'KP'
@@ -169,6 +181,242 @@ const DEFAULT_AGE_CHARACTER_PROFILES = [
     color: '#dcde42',
     id: 'char_bangyi',
     name: '邦伊',
+  },
+]
+
+const DEFAULT_VERTICAL_TIMELINE_LANES = [
+  {
+    color: '#d97706',
+    id: 'bangyi',
+    name: '邦伊',
+  },
+  {
+    color: '#57534e',
+    id: 'liuzhizhou',
+    name: '柳之舟',
+  },
+  {
+    color: '#475569',
+    id: 'liuzhixing',
+    name: '柳之行',
+  },
+]
+
+const DEFAULT_VERTICAL_TIMELINE_YEARS = [
+  {
+    id: 'year-165',
+    label: '165',
+    bubblesByLane: {
+      bangyi: { id: 'b-165-entry', title: '第一次踏进偏馆' },
+      liuzhizhou: null,
+      liuzhixing: { id: 'x-165-entry', title: '替人抄完那本旧账册' },
+    },
+    months: [],
+  },
+  {
+    id: 'year-171',
+    label: '171',
+    bubblesByLane: {
+      bangyi: { id: 'b-171-entry', title: '从东码头收回一封湿信' },
+      liuzhizhou: null,
+      liuzhixing: null,
+    },
+    months: [
+      {
+        id: 'month-171-2',
+        label: '171.2',
+        bubblesByLane: {
+          bangyi: null,
+          liuzhizhou: { id: 'z-171-2-entry', title: '在灰塔楼下看见同一盏灯' },
+          liuzhixing: { id: 'x-171-2-entry', title: '替馆中长辈送一纸回帖' },
+        },
+        days: [],
+      },
+      {
+        id: 'month-171-12',
+        label: '171.12',
+        bubblesByLane: {
+          bangyi: null,
+          liuzhizhou: null,
+          liuzhixing: { id: 'x-171-12-entry', title: '在偏廊把灯芯重新剪短' },
+        },
+        days: [
+          {
+            id: 'day-171-12-8-a',
+            label: '171.12.8',
+            bubblesByLane: {
+              bangyi: { id: 'b-171-12-8-a', title: '半夜把伞忘在回廊' },
+              liuzhizhou: { id: 'z-171-12-8-a', title: '抄录墙上只剩半句的题记' },
+              liuzhixing: { id: 'x-171-12-8-a', title: '雨里把门闩重新换过' },
+            },
+          },
+          {
+            id: 'day-171-12-8-b',
+            label: '171.12.8',
+            bubblesByLane: {
+              bangyi: { id: 'b-171-12-8-b', title: '把藏在袖中的铜钥匙交出去' },
+              liuzhizhou: { id: 'z-171-12-8-b', title: '对着蓝灯照出纸页暗纹' },
+              liuzhixing: null,
+            },
+          },
+          {
+            id: 'day-171-12-11',
+            label: '171.12.11',
+            bubblesByLane: {
+              bangyi: null,
+              liuzhizhou: { id: 'z-171-12-11', title: '在塔顶记下第三次钟声延迟' },
+              liuzhixing: { id: 'x-171-12-11', title: '从风里听见有人叫旧名' },
+            },
+          },
+        ],
+      },
+    ],
+  },
+]
+
+const DEFAULT_VERTICAL_TIMELINE_EVENTS = [
+  {
+    body: '那天偏馆的窗纸被雨水打得发软，邦伊站在门口听了很久，才意识到里头并没有人翻书，却一直有纸页被掀动的声音。',
+    endTime: 165,
+    id: 'b-165-entry',
+    laneId: 'bangyi',
+    nodeId: 'year-165',
+    startTime: 165,
+    summary: '邦伊第一次踏进偏馆时，听见了不属于任何人的翻页声。',
+    tags: ['#偏馆', '#初访'],
+    title: '第一次踏进偏馆',
+  },
+  {
+    body: '柳之行把那本旧账册抄到最后一页时，才发现原件比抄本多出一行极浅的红字，像被谁刻意藏进纸纹里。',
+    endTime: 165,
+    id: 'x-165-entry',
+    laneId: 'liuzhixing',
+    nodeId: 'year-165',
+    startTime: 165,
+    summary: '旧账册最后一页多出了一行只在特定角度下才能看到的红字。',
+    tags: ['#旧账册', '#柳之行'],
+    title: '替人抄完那本旧账册',
+  },
+  {
+    body: '信封的边角全被海水泡开了，只有蜡封还勉强维持原样。邦伊把它带回来的时候，袖口也全是湿的。',
+    endTime: 171,
+    id: 'b-171-entry',
+    laneId: 'bangyi',
+    nodeId: 'year-171',
+    startTime: 171,
+    summary: '邦伊从东码头收回一封被海水浸透的旧信，蜡封上还沾着盐粒。',
+    tags: ['#东码头', '#湿信'],
+    title: '从东码头收回一封湿信',
+  },
+  {
+    body: '灰塔楼下的灯原本该在子夜后熄灭，可柳之舟连续三晚经过时都看见它亮着，像故意在等谁回来。',
+    endTime: 1712,
+    id: 'z-171-2-entry',
+    laneId: 'liuzhizhou',
+    nodeId: 'month-171-2',
+    startTime: 1712,
+    summary: '灰塔楼下那盏本应熄灭的灯，连续几夜都在同一时刻亮着。',
+    tags: ['#灰塔楼', '#夜灯'],
+    title: '在灰塔楼下看见同一盏灯',
+  },
+  {
+    body: '那封回帖写得极克制，只在结尾多添了一句“风大，勿夜行”。送到时，柳之行注意到门内的人看见这句时明显停了一下。',
+    endTime: 1712,
+    id: 'x-171-2-entry',
+    laneId: 'liuzhixing',
+    nodeId: 'month-171-2',
+    startTime: 1712,
+    summary: '一纸回帖在结尾多添了一句劝阻夜行的话，像在暗示什么。',
+    tags: ['#回帖', '#偏馆'],
+    title: '替馆中长辈送一纸回帖',
+  },
+  {
+    body: '偏廊尽头的蓝灯总烧得太急，柳之行把灯芯剪短后，那束光终于不再一阵明一阵暗，像暂时安静了下来。',
+    endTime: 17112,
+    id: 'x-171-12-entry',
+    laneId: 'liuzhixing',
+    nodeId: 'month-171-12',
+    startTime: 17112,
+    summary: '柳之行重新修整偏廊蓝灯的灯芯，让忽明忽暗的火终于稳定下来。',
+    tags: ['#蓝灯', '#偏廊'],
+    title: '在偏廊把灯芯重新剪短',
+  },
+  {
+    body: '那把伞原本只是临时搁在回廊，等邦伊回去取的时候，伞骨上却多了一根不属于它的银丝。',
+    endTime: 1711208,
+    id: 'b-171-12-8-a',
+    laneId: 'bangyi',
+    nodeId: 'day-171-12-8-a',
+    startTime: 1711208,
+    summary: '邦伊半夜回廊落伞，折返时发现伞骨上多出一根细银丝。',
+    tags: ['#回廊', '#夜雨'],
+    title: '半夜把伞忘在回廊',
+  },
+  {
+    body: '墙上的题记只剩半句，前半句像被人用湿布擦掉了。柳之舟照着抄时，笔尖三次在同一处打滑。',
+    endTime: 1711208,
+    id: 'z-171-12-8-a',
+    laneId: 'liuzhizhou',
+    nodeId: 'day-171-12-8-a',
+    startTime: 1711208,
+    summary: '柳之舟抄录回廊墙上的残句题记，却总在同一位置打滑。',
+    tags: ['#题记', '#抄录'],
+    title: '抄录墙上只剩半句的题记',
+  },
+  {
+    body: '那天的雨太横，门闩老是卡不稳。柳之行索性把旧门闩拆了重装，结果在木槽里撬出一小片刻着年份的铜牌。',
+    endTime: 1711208,
+    id: 'x-171-12-8-a',
+    laneId: 'liuzhixing',
+    nodeId: 'day-171-12-8-a',
+    startTime: 1711208,
+    summary: '柳之行雨夜重装门闩时，从木槽里撬出一片刻着旧年份的铜牌。',
+    tags: ['#门闩', '#铜牌'],
+    title: '雨里把门闩重新换过',
+  },
+  {
+    body: '铜钥匙一直藏在袖中，直到真正交出去那一刻，邦伊才意识到它比看上去要冷得多，像刚从井水里拿出来。',
+    endTime: 1711208,
+    id: 'b-171-12-8-b',
+    laneId: 'bangyi',
+    nodeId: 'day-171-12-8-b',
+    startTime: 1711208,
+    summary: '邦伊把藏在袖中的铜钥匙交出时，才发现它冷得不合常理。',
+    tags: ['#铜钥匙', '#交付'],
+    title: '把藏在袖中的铜钥匙交出去',
+  },
+  {
+    body: '蓝灯斜照在纸页边缘，暗纹像潮水一样慢慢浮起。柳之舟认出那不是普通水印，而是一张被重新缝进纸里的旧地图。',
+    endTime: 1711208,
+    id: 'z-171-12-8-b',
+    laneId: 'liuzhizhou',
+    nodeId: 'day-171-12-8-b',
+    startTime: 1711208,
+    summary: '柳之舟借蓝灯照出纸页暗纹，发现纸里藏着一张旧地图。',
+    tags: ['#暗纹', '#旧地图'],
+    title: '对着蓝灯照出纸页暗纹',
+  },
+  {
+    body: '那夜的第三次钟声比往常慢了半拍。柳之舟记下时间后，抬头看见塔檐下原本静止的铜铃全都朝同一个方向轻轻转过去。',
+    endTime: 1711211,
+    id: 'z-171-12-11',
+    laneId: 'liuzhizhou',
+    nodeId: 'day-171-12-11',
+    startTime: 1711211,
+    summary: '塔顶第三次钟声延迟半拍，铜铃也在无风中齐齐转向。',
+    tags: ['#塔顶', '#钟声'],
+    title: '在塔顶记下第三次钟声延迟',
+  },
+  {
+    body: '风里那声旧名像是贴着耳后吹过来的，轻得几乎以为是错觉。可柳之行停下脚步后，回廊尽头那盏灯也跟着暗了一瞬。',
+    endTime: 1711211,
+    id: 'x-171-12-11',
+    laneId: 'liuzhixing',
+    nodeId: 'day-171-12-11',
+    startTime: 1711211,
+    summary: '柳之行在风里听见有人唤旧名，而回廊尽头的灯随之暗了一瞬。',
+    tags: ['#旧名', '#回廊'],
+    title: '从风里听见有人叫旧名',
   },
 ]
 
@@ -276,7 +524,9 @@ database.exec(`
   CREATE TABLE IF NOT EXISTS character_cards (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
+    worldview TEXT NOT NULL,
     name TEXT NOT NULL,
+    color TEXT NOT NULL,
     avatar_data_url TEXT,
     presentation_mode TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -351,6 +601,29 @@ database.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_age_chronicle_cell_notes_worldview_entry
     ON age_chronicle_cell_notes(worldview_name, entry_id, profile_id, updated_at);
+
+  CREATE TABLE IF NOT EXISTS vertical_timeline_states (
+    worldview_name TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    updated_by_user_id TEXT,
+    FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS vertical_timeline_lane_permissions (
+    worldview_name TEXT NOT NULL,
+    lane_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (worldview_name, lane_id, user_id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_vertical_timeline_lane_permissions_worldview
+    ON vertical_timeline_lane_permissions(worldview_name, lane_id);
+
+  CREATE INDEX IF NOT EXISTS idx_vertical_timeline_lane_permissions_user
+    ON vertical_timeline_lane_permissions(user_id, worldview_name);
 `)
 
 function ensureColumn(tableName, columnName, columnDefinition) {
@@ -365,8 +638,11 @@ function ensureColumn(tableName, columnName, columnDefinition) {
 
 ensureColumn('sessions', 'user_id', 'user_id TEXT')
 ensureColumn('sessions', 'active_character_id', 'active_character_id TEXT')
+ensureColumn('character_cards', 'worldview', "worldview TEXT NOT NULL DEFAULT ''")
+ensureColumn('character_cards', 'color', "color TEXT NOT NULL DEFAULT '#64748b'")
 ensureColumn('character_cards', 'avatar_data_url', 'avatar_data_url TEXT')
 ensureColumn('character_cards', 'presentation_mode', `presentation_mode TEXT NOT NULL DEFAULT '${CHAT_PRESENTATION_BUBBLE}'`)
+database.exec('CREATE INDEX IF NOT EXISTS idx_character_cards_worldview ON character_cards(worldview)')
 ensureColumn('messages', 'user_id', 'user_id TEXT')
 ensureColumn('messages', 'speaker_name', 'speaker_name TEXT')
 ensureColumn('messages', 'speaker_character_id', 'speaker_character_id TEXT')
@@ -805,6 +1081,68 @@ const statementDeleteAgeChronicleCellNotesForEntry = database.prepare(`
     AND entry_id = ?
 `)
 
+const statementSelectVerticalTimelineState = database.prepare(`
+  SELECT
+    worldview_name AS worldviewName,
+    state_json AS stateJson,
+    updated_at AS updatedAt,
+    updated_by_user_id AS updatedByUserId
+  FROM vertical_timeline_states
+  WHERE worldview_name = ?
+  LIMIT 1
+`)
+
+const statementUpsertVerticalTimelineState = database.prepare(`
+  INSERT INTO vertical_timeline_states (worldview_name, state_json, updated_at, updated_by_user_id)
+  VALUES (@worldviewName, @stateJson, @updatedAt, @updatedByUserId)
+  ON CONFLICT(worldview_name) DO UPDATE SET
+    state_json = excluded.state_json,
+    updated_at = excluded.updated_at,
+    updated_by_user_id = excluded.updated_by_user_id
+`)
+
+const statementSelectVerticalTimelineLanePermissionsForWorldview = database.prepare(`
+  SELECT
+    worldview_name AS worldviewName,
+    lane_id AS laneId,
+    user_id AS userId,
+    created_at AS createdAt
+  FROM vertical_timeline_lane_permissions
+  WHERE worldview_name = ?
+  ORDER BY lane_id ASC, created_at ASC, user_id ASC
+`)
+
+const statementSelectVerticalTimelineLanePermissionsForLane = database.prepare(`
+  SELECT
+    worldview_name AS worldviewName,
+    lane_id AS laneId,
+    user_id AS userId,
+    created_at AS createdAt
+  FROM vertical_timeline_lane_permissions
+  WHERE worldview_name = ?
+    AND lane_id = ?
+  ORDER BY created_at ASC, user_id ASC
+`)
+
+const statementInsertVerticalTimelineLanePermission = database.prepare(`
+  INSERT INTO vertical_timeline_lane_permissions (worldview_name, lane_id, user_id, created_at)
+  VALUES (@worldviewName, @laneId, @userId, @createdAt)
+  ON CONFLICT(worldview_name, lane_id, user_id) DO NOTHING
+`)
+
+const statementDeleteVerticalTimelineLanePermissionsForLane = database.prepare(`
+  DELETE FROM vertical_timeline_lane_permissions
+  WHERE worldview_name = ?
+    AND lane_id = ?
+`)
+
+const statementDeleteVerticalTimelineLanePermission = database.prepare(`
+  DELETE FROM vertical_timeline_lane_permissions
+  WHERE worldview_name = @worldviewName
+    AND lane_id = @laneId
+    AND user_id = @userId
+`)
+
 const statementInsertRoomMembership = database.prepare(`
   INSERT INTO room_memberships (room_id, user_id, role, created_at)
   VALUES (@roomId, @userId, @role, @createdAt)
@@ -963,7 +1301,9 @@ const statementInsertCharacterCard = database.prepare(`
   INSERT INTO character_cards (
     id,
     user_id,
+    worldview,
     name,
+    color,
     avatar_data_url,
     presentation_mode,
     status,
@@ -974,7 +1314,9 @@ const statementInsertCharacterCard = database.prepare(`
   VALUES (
     @id,
     @userId,
+    @worldview,
     @name,
+    @color,
     @avatarDataUrl,
     @presentationMode,
     @status,
@@ -1017,10 +1359,26 @@ const statementInsertCharacterAttributes = database.prepare(`
 
 const statementUpdateCharacterCard = database.prepare(`
   UPDATE character_cards
-  SET name = @name,
+  SET worldview = @worldview,
+      name = @name,
+      color = @color,
       avatar_data_url = @avatarDataUrl,
+      presentation_mode = @presentationMode,
       updated_at = @updatedAt
   WHERE id = @id AND user_id = @userId
+`)
+
+const statementAdminUpdateCharacterCard = database.prepare(`
+  UPDATE character_cards
+  SET user_id = @userId,
+      worldview = @worldview,
+      name = @name,
+      color = @color,
+      avatar_data_url = @avatarDataUrl,
+      presentation_mode = @presentationMode,
+      status = @status,
+      updated_at = @updatedAt
+  WHERE id = @id
 `)
 
 const statementUpdateCharacterPresentationMode = database.prepare(`
@@ -1048,7 +1406,10 @@ const statementUpdateCharacterAttributes = database.prepare(`
 const statementSelectCharacterCardsForUser = database.prepare(`
   SELECT
     character_cards.id,
+    character_cards.user_id AS userId,
+    character_cards.worldview,
     character_cards.name,
+    character_cards.color,
     character_cards.avatar_data_url AS avatarDataUrl,
     character_cards.presentation_mode AS presentationMode,
     character_cards.status,
@@ -1071,7 +1432,10 @@ const statementSelectCharacterCardsForUser = database.prepare(`
 const statementSelectCharacterCardByIdForUser = database.prepare(`
   SELECT
     character_cards.id,
+    character_cards.user_id AS userId,
+    character_cards.worldview,
     character_cards.name,
+    character_cards.color,
     character_cards.avatar_data_url AS avatarDataUrl,
     character_cards.presentation_mode AS presentationMode,
     character_cards.status,
@@ -1089,6 +1453,150 @@ const statementSelectCharacterCardByIdForUser = database.prepare(`
   JOIN character_attributes ON character_attributes.character_id = character_cards.id
   WHERE character_cards.id = ? AND character_cards.user_id = ?
   LIMIT 1
+`)
+
+const statementSelectCharacterCardById = database.prepare(`
+  SELECT
+    character_cards.id,
+    character_cards.user_id AS userId,
+    character_cards.worldview,
+    character_cards.name,
+    character_cards.color,
+    character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.presentation_mode AS presentationMode,
+    character_cards.status,
+    character_cards.is_default AS isDefault,
+    character_attributes.strength,
+    character_attributes.dexterity,
+    character_attributes.intelligence,
+    character_attributes.luck,
+    character_attributes.size,
+    character_attributes.constitution,
+    character_attributes.education,
+    character_attributes.appearance,
+    character_attributes.willpower
+  FROM character_cards
+  JOIN character_attributes ON character_attributes.character_id = character_cards.id
+  WHERE character_cards.id = ?
+  LIMIT 1
+`)
+
+const statementSelectCharacterCardsForWorldview = database.prepare(`
+  SELECT
+    character_cards.id,
+    character_cards.user_id AS userId,
+    character_cards.worldview,
+    character_cards.name,
+    character_cards.color,
+    character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.presentation_mode AS presentationMode,
+    character_cards.status,
+    character_cards.is_default AS isDefault,
+    character_attributes.strength,
+    character_attributes.dexterity,
+    character_attributes.intelligence,
+    character_attributes.luck,
+    character_attributes.size,
+    character_attributes.constitution,
+    character_attributes.education,
+    character_attributes.appearance,
+    character_attributes.willpower
+  FROM character_cards
+  JOIN character_attributes ON character_attributes.character_id = character_cards.id
+  WHERE character_cards.worldview = ?
+    AND character_cards.status != 'archived'
+  ORDER BY character_cards.created_at ASC, character_cards.id ASC
+`)
+
+const statementSelectAllCharacterCardsForAdmin = database.prepare(`
+  SELECT
+    character_cards.id,
+    character_cards.user_id AS userId,
+    character_cards.worldview,
+    character_cards.name,
+    character_cards.color,
+    character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.presentation_mode AS presentationMode,
+    character_cards.status,
+    character_cards.is_default AS isDefault,
+    character_cards.created_at AS createdAt,
+    character_cards.updated_at AS updatedAt,
+    character_attributes.strength,
+    character_attributes.dexterity,
+    character_attributes.intelligence,
+    character_attributes.luck,
+    character_attributes.size,
+    character_attributes.constitution,
+    character_attributes.education,
+    character_attributes.appearance,
+    character_attributes.willpower,
+    users.handle AS userHandle,
+    users.display_name AS userDisplayName,
+    users.role AS userRole,
+    users.status AS userStatus
+  FROM character_cards
+  JOIN character_attributes ON character_attributes.character_id = character_cards.id
+  JOIN users ON users.id = character_cards.user_id
+  ORDER BY character_cards.updated_at DESC, character_cards.created_at DESC
+`)
+
+const statementSelectAllActiveUsersForAdmin = database.prepare(`
+  SELECT
+    id,
+    handle,
+    display_name AS displayName,
+    role,
+    status
+  FROM users
+  WHERE status = 'active'
+  ORDER BY display_name COLLATE NOCASE ASC, handle COLLATE NOCASE ASC
+`)
+
+const statementCountActiveCharacterCardsForUser = database.prepare(`
+  SELECT COUNT(*) AS count
+  FROM character_cards
+  WHERE user_id = ?
+    AND status != 'archived'
+`)
+
+const statementSelectDefaultCharacterCardForUser = database.prepare(`
+  SELECT id
+  FROM character_cards
+  WHERE user_id = ?
+    AND status != 'archived'
+    AND is_default = 1
+  LIMIT 1
+`)
+
+const statementSelectFirstActiveCharacterCardForUser = database.prepare(`
+  SELECT id
+  FROM character_cards
+  WHERE user_id = ?
+    AND status != 'archived'
+  ORDER BY created_at ASC, id ASC
+  LIMIT 1
+`)
+
+const statementClearDefaultCharacterCardsForUser = database.prepare(`
+  UPDATE character_cards
+  SET is_default = 0,
+      updated_at = @updatedAt
+  WHERE user_id = @userId
+`)
+
+const statementSetDefaultCharacterCard = database.prepare(`
+  UPDATE character_cards
+  SET is_default = 1,
+      updated_at = @updatedAt
+  WHERE id = @id
+`)
+
+const statementArchiveCharacterCard = database.prepare(`
+  UPDATE character_cards
+  SET status = 'archived',
+      is_default = 0,
+      updated_at = @updatedAt
+  WHERE id = @id
 `)
 
 const statementSelectNarrationCharacterForUser = database.prepare(`
@@ -1773,6 +2281,62 @@ function sanitiseAgeChronicleLongText(value, maxLength) {
   return String(value ?? '').trim().slice(0, maxLength)
 }
 
+function sanitiseVerticalTimelineWorldview(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, VERTICAL_TIMELINE_MAX_WORLDVIEW_LENGTH)
+}
+
+function sanitiseVerticalTimelineShortText(value, maxLength, fallback = '') {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim()
+  const safeText = text.slice(0, maxLength)
+  return safeText === '' ? fallback : safeText
+}
+
+function sanitiseVerticalTimelineLongText(value, maxLength) {
+  return String(value ?? '').trim().slice(0, maxLength)
+}
+
+function sanitiseVerticalTimelineColor(value, fallback = '#64748b') {
+  const color = sanitiseVerticalTimelineShortText(
+    value,
+    VERTICAL_TIMELINE_MAX_COLOR_LENGTH,
+    fallback,
+  )
+
+  return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/u.test(color) ? color : fallback
+}
+
+function sanitiseVerticalTimelineTags(value) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const uniqueTags = []
+  const seenTags = new Set()
+
+  for (const entry of value) {
+    const tag = sanitiseVerticalTimelineShortText(entry, VERTICAL_TIMELINE_MAX_TAG_LENGTH)
+
+    if (tag === '') {
+      continue
+    }
+
+    const dedupeKey = tag.toLocaleLowerCase('zh-CN')
+
+    if (seenTags.has(dedupeKey)) {
+      continue
+    }
+
+    seenTags.add(dedupeKey)
+    uniqueTags.push(tag)
+
+    if (uniqueTags.length >= VERTICAL_TIMELINE_MAX_TAG_COUNT) {
+      break
+    }
+  }
+
+  return uniqueTags
+}
+
 function normaliseAgeChronicleNumber(value, fallback = 0) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -1907,7 +2471,8 @@ function normaliseAgeChronicleVisibility(value) {
 function sanitiseAgeChronicleStructure(input) {
   if (!input || typeof input !== 'object') {
     return null
-  }
+
+   }
 
   const characterProfilesSource = Array.isArray(input.characterProfiles)
     ? input.characterProfiles.slice(0, AGE_CHRONICLE_MAX_CHARACTER_COUNT)
@@ -2222,6 +2787,903 @@ function buildAgeChronicleStateForViewer(worldviewName, authContext) {
   }
 }
 
+function cloneVerticalTimelineBubble(bubble) {
+  return bubble && typeof bubble === 'object'
+    ? {
+        id: bubble.id,
+        title: bubble.title,
+      }
+    : null
+}
+
+function cloneVerticalTimelineBubbles(bubblesByLane) {
+  return Object.fromEntries(
+    Object.entries(bubblesByLane).map(([laneId, bubble]) => [laneId, cloneVerticalTimelineBubble(bubble)]),
+  )
+}
+
+function cloneVerticalTimelineState(state) {
+  return {
+    events: state.events.map((event) => ({
+      ...event,
+      tags: [...event.tags],
+    })),
+    lanes: state.lanes.map((lane) => ({ ...lane })),
+    years: state.years.map((year) => ({
+      ...year,
+      bubblesByLane: cloneVerticalTimelineBubbles(year.bubblesByLane),
+      months: year.months.map((month) => ({
+        ...month,
+        bubblesByLane: cloneVerticalTimelineBubbles(month.bubblesByLane),
+        days: month.days.map((day) => ({
+          ...day,
+          bubblesByLane: cloneVerticalTimelineBubbles(day.bubblesByLane),
+        })),
+      })),
+    })),
+  }
+}
+
+function createVerticalTimelineBubbleMapTemplate(lanes) {
+  return Object.fromEntries(lanes.map((lane) => [lane.id, null]))
+}
+
+function syncVerticalTimelineBubbleMapKeys(bubblesByLane, laneIds) {
+  return Object.fromEntries(
+    laneIds.map((laneId) => [laneId, cloneVerticalTimelineBubble(bubblesByLane?.[laneId] ?? null)]),
+  )
+}
+
+function syncVerticalTimelineYearsWithLanes(years, lanes) {
+  const laneIds = lanes.map((lane) => lane.id)
+
+  return years.map((year) => ({
+    ...year,
+    bubblesByLane: syncVerticalTimelineBubbleMapKeys(year.bubblesByLane, laneIds),
+    months: year.months.map((month) => ({
+      ...month,
+      bubblesByLane: syncVerticalTimelineBubbleMapKeys(month.bubblesByLane, laneIds),
+      days: month.days.map((day) => ({
+        ...day,
+        bubblesByLane: syncVerticalTimelineBubbleMapKeys(day.bubblesByLane, laneIds),
+      })),
+    })),
+  }))
+}
+
+function flattenVerticalTimelineNodes(years) {
+  return years.flatMap((year) => [
+    {
+      id: year.id,
+      kind: 'year',
+      label: year.label,
+      parentMonthId: null,
+      parentYearId: null,
+    },
+    ...year.months.flatMap((month) => [
+      {
+        id: month.id,
+        kind: 'month',
+        label: month.label,
+        parentMonthId: null,
+        parentYearId: year.id,
+      },
+      ...month.days.map((day) => ({
+        id: day.id,
+        kind: 'day',
+        label: day.label,
+        parentMonthId: month.id,
+        parentYearId: year.id,
+      })),
+    ]),
+  ])
+}
+
+function findVerticalTimelineNode(years, nodeId) {
+  for (const year of years) {
+    if (year.id === nodeId) {
+      return {
+        day: null,
+        kind: 'year',
+        month: null,
+        year,
+      }
+    }
+
+    for (const month of year.months) {
+      if (month.id === nodeId) {
+        return {
+          day: null,
+          kind: 'month',
+          month,
+          year,
+        }
+      }
+
+      for (const day of month.days) {
+        if (day.id === nodeId) {
+          return {
+            day,
+            kind: 'day',
+            month,
+            year,
+          }
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+function getVerticalTimelineBubbleAtNode(years, nodeId, laneId) {
+  const node = findVerticalTimelineNode(years, nodeId)
+
+  if (!node) {
+    return null
+  }
+
+  if (node.kind === 'year') {
+    return node.year.bubblesByLane[laneId] ?? null
+  }
+
+  if (node.kind === 'month' && node.month) {
+    return node.month.bubblesByLane[laneId] ?? null
+  }
+
+  if (node.kind === 'day' && node.day) {
+    return node.day.bubblesByLane[laneId] ?? null
+  }
+
+  return null
+}
+
+function setVerticalTimelineBubbleAtNode(years, nodeId, laneId, bubble) {
+  return years.map((year) => {
+    if (year.id === nodeId) {
+      return {
+        ...year,
+        bubblesByLane: {
+          ...year.bubblesByLane,
+          [laneId]: cloneVerticalTimelineBubble(bubble),
+        },
+      }
+    }
+
+    return {
+      ...year,
+      months: year.months.map((month) => {
+        if (month.id === nodeId) {
+          return {
+            ...month,
+            bubblesByLane: {
+              ...month.bubblesByLane,
+              [laneId]: cloneVerticalTimelineBubble(bubble),
+            },
+          }
+        }
+
+        return {
+          ...month,
+          days: month.days.map((day) =>
+            day.id === nodeId
+              ? {
+                  ...day,
+                  bubblesByLane: {
+                    ...day.bubblesByLane,
+                    [laneId]: cloneVerticalTimelineBubble(bubble),
+                  },
+                }
+              : day,
+          ),
+        }
+      }),
+    }
+  })
+}
+
+function clearVerticalTimelineEventReferences(years, eventId) {
+  const clearBubbleMap = (bubblesByLane) =>
+    Object.fromEntries(
+      Object.entries(bubblesByLane).map(([laneId, bubble]) => [
+        laneId,
+        bubble?.id === eventId ? null : cloneVerticalTimelineBubble(bubble),
+      ]),
+    )
+
+  return years.map((year) => ({
+    ...year,
+    bubblesByLane: clearBubbleMap(year.bubblesByLane),
+    months: year.months.map((month) => ({
+      ...month,
+      bubblesByLane: clearBubbleMap(month.bubblesByLane),
+      days: month.days.map((day) => ({
+        ...day,
+        bubblesByLane: clearBubbleMap(day.bubblesByLane),
+      })),
+    })),
+  }))
+}
+
+function deriveVerticalTimelineSummary(bodyText, title) {
+  const trimmed = String(bodyText ?? '').trim().replace(/\s+/g, ' ')
+
+  if (trimmed === '') {
+    return `${title} 的预览内容暂未填写。`
+  }
+
+  return trimmed.slice(0, 72)
+}
+
+function parseVerticalTimelinePointValue(label) {
+  const digits = String(label ?? '').replace(/[^\d]+/g, '')
+  const parsed = Number(digits)
+
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function createVerticalTimelineId(prefix) {
+  return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
+}
+
+function createVerticalTimelineLaneId() {
+  return createVerticalTimelineId('lane')
+}
+
+function createVerticalTimelineNodeId(kind) {
+  return createVerticalTimelineId(kind)
+}
+
+function createVerticalTimelineEventId() {
+  return createVerticalTimelineId('event')
+}
+
+function sanitiseVerticalTimelineState(input, worldviewName = '') {
+  if (!input || typeof input !== 'object') {
+    return null
+  }
+
+  const lanesSource = Array.isArray(input.lanes)
+    ? input.lanes.slice(0, VERTICAL_TIMELINE_MAX_LANE_COUNT)
+    : []
+  const seenLaneIds = new Set()
+  const lanes = lanesSource.flatMap((lane, index) => {
+    if (!lane || typeof lane !== 'object') {
+      return []
+    }
+
+    const id = sanitiseVerticalTimelineShortText(lane.id, 96, `lane_${index + 1}`)
+    const name = sanitiseVerticalTimelineShortText(
+      lane.name,
+      VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+      '未命名角色',
+    )
+
+    if (id === '' || seenLaneIds.has(id)) {
+      return []
+    }
+
+    seenLaneIds.add(id)
+
+    return [
+      {
+        color: sanitiseVerticalTimelineColor(lane.color, '#64748b'),
+        id,
+        name,
+      },
+    ]
+  })
+
+  const laneIds = lanes.map((lane) => lane.id)
+  const nodeIds = new Set()
+  let monthCount = 0
+  let dayCount = 0
+  const sanitiseBubbleMap = (value) =>
+    Object.fromEntries(
+      lanes.map((lane) => {
+        const candidate = value && typeof value === 'object' ? value[lane.id] : null
+
+        if (!candidate || typeof candidate !== 'object') {
+          return [lane.id, null]
+        }
+
+        const id = sanitiseVerticalTimelineShortText(candidate.id, 96)
+
+        if (id === '') {
+          return [lane.id, null]
+        }
+
+        return [
+          lane.id,
+          {
+            id,
+            title: sanitiseVerticalTimelineShortText(
+              candidate.title,
+              VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+              '未命名事件',
+            ),
+          },
+        ]
+      }),
+    )
+  const yearsSource = Array.isArray(input.years)
+    ? input.years.slice(0, VERTICAL_TIMELINE_MAX_YEAR_COUNT)
+    : []
+  const years = yearsSource.flatMap((year, yearIndex) => {
+    if (!year || typeof year !== 'object') {
+      return []
+    }
+
+    const yearId = sanitiseVerticalTimelineShortText(year.id, 96, `year_${yearIndex + 1}`)
+    const yearLabel = sanitiseVerticalTimelineShortText(
+      year.label,
+      VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+      `第 ${yearIndex + 1} 年`,
+    )
+
+    if (yearId === '' || nodeIds.has(yearId)) {
+      return []
+    }
+
+    nodeIds.add(yearId)
+    const monthsSource = Array.isArray(year.months) ? year.months : []
+    const months = []
+
+    for (const month of monthsSource) {
+      if (monthCount >= VERTICAL_TIMELINE_MAX_MONTH_COUNT) {
+        break
+      }
+
+      if (!month || typeof month !== 'object') {
+        continue
+      }
+
+      const monthId = sanitiseVerticalTimelineShortText(month.id, 96, `month_${monthCount + 1}`)
+      const monthLabel = sanitiseVerticalTimelineShortText(
+        month.label,
+        VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+        `第 ${monthCount + 1} 月`,
+      )
+
+      if (monthId === '' || nodeIds.has(monthId)) {
+        continue
+      }
+
+      nodeIds.add(monthId)
+      monthCount += 1
+      const daysSource = Array.isArray(month.days) ? month.days : []
+      const days = []
+
+      for (const day of daysSource) {
+        if (dayCount >= VERTICAL_TIMELINE_MAX_DAY_COUNT) {
+          break
+        }
+
+        if (!day || typeof day !== 'object') {
+          continue
+        }
+
+        const dayId = sanitiseVerticalTimelineShortText(day.id, 96, `day_${dayCount + 1}`)
+        const dayLabel = sanitiseVerticalTimelineShortText(
+          day.label,
+          VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+          `第 ${dayCount + 1} 日`,
+        )
+
+        if (dayId === '' || nodeIds.has(dayId)) {
+          continue
+        }
+
+        nodeIds.add(dayId)
+        dayCount += 1
+        days.push({
+          bubblesByLane: sanitiseBubbleMap(day.bubblesByLane),
+          id: dayId,
+          label: dayLabel,
+        })
+      }
+
+      months.push({
+        bubblesByLane: sanitiseBubbleMap(month.bubblesByLane),
+        days,
+        id: monthId,
+        label: monthLabel,
+      })
+    }
+
+    return [
+      {
+        bubblesByLane: sanitiseBubbleMap(year.bubblesByLane),
+        id: yearId,
+        label: yearLabel,
+        months,
+      },
+    ]
+  })
+  const safeYears = syncVerticalTimelineYearsWithLanes(years, lanes)
+  const nodeIdSet = new Set(flattenVerticalTimelineNodes(safeYears).map((node) => node.id))
+  const laneIdSet = new Set(laneIds)
+  const seenEventIds = new Set()
+  const eventsSource = Array.isArray(input.events)
+    ? input.events.slice(0, VERTICAL_TIMELINE_MAX_EVENT_COUNT)
+    : []
+  const events = eventsSource.flatMap((event) => {
+    if (!event || typeof event !== 'object') {
+      return []
+    }
+
+    const id = sanitiseVerticalTimelineShortText(event.id, 96)
+    const nodeId = sanitiseVerticalTimelineShortText(event.nodeId, 96)
+    const laneId = sanitiseVerticalTimelineShortText(event.laneId, 96)
+    const title = sanitiseVerticalTimelineShortText(
+      event.title,
+      VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+      '未命名事件',
+    )
+
+    if (
+      id === '' ||
+      nodeId === '' ||
+      laneId === '' ||
+      !nodeIdSet.has(nodeId) ||
+      !laneIdSet.has(laneId) ||
+      seenEventIds.has(id)
+    ) {
+      return []
+    }
+
+    seenEventIds.add(id)
+    const label = getVerticalTimelinePointLabelByNodeId(safeYears, nodeId)
+    const pointValue = parseVerticalTimelinePointValue(label)
+
+    return [
+      {
+        body: sanitiseVerticalTimelineLongText(event.body, VERTICAL_TIMELINE_MAX_BODY_LENGTH),
+        detailHtml: typeof event.detailHtml === 'string'
+          ? sanitiseVerticalTimelineLongText(
+              event.detailHtml,
+              VERTICAL_TIMELINE_MAX_BODY_LENGTH * 2,
+            )
+          : undefined,
+        detailImage: typeof event.detailImage === 'string'
+          ? sanitiseVerticalTimelineShortText(event.detailImage, 400)
+          : undefined,
+        endTime: Number.isFinite(Number(event.endTime)) ? Number(event.endTime) : pointValue,
+        id,
+        laneId,
+        nodeId,
+        startTime: Number.isFinite(Number(event.startTime)) ? Number(event.startTime) : pointValue,
+        summary: sanitiseVerticalTimelineShortText(
+          event.summary,
+          VERTICAL_TIMELINE_MAX_SUMMARY_LENGTH,
+          deriveVerticalTimelineSummary(event.body, title),
+        ),
+        tags: sanitiseVerticalTimelineTags(event.tags),
+        title,
+        worldview: sanitiseVerticalTimelineWorldview(event.worldview) || worldviewName,
+      },
+    ]
+  })
+  const eventsById = new Map(events.map((event) => [event.id, event]))
+  let syncedYears = safeYears
+
+  for (const event of events) {
+    const bubble = getVerticalTimelineBubbleAtNode(syncedYears, event.nodeId, event.laneId)
+
+    if (!bubble || bubble.id === event.id) {
+      syncedYears = setVerticalTimelineBubbleAtNode(syncedYears, event.nodeId, event.laneId, {
+        id: event.id,
+        title: event.title,
+      })
+    }
+  }
+
+  for (const node of flattenVerticalTimelineNodes(syncedYears)) {
+    for (const lane of lanes) {
+      const bubble = getVerticalTimelineBubbleAtNode(syncedYears, node.id, lane.id)
+
+      if (!bubble) {
+        continue
+      }
+
+      const sourceEvent = eventsById.get(bubble.id)
+
+      if (!sourceEvent || sourceEvent.nodeId !== node.id || sourceEvent.laneId !== lane.id) {
+        syncedYears = setVerticalTimelineBubbleAtNode(syncedYears, node.id, lane.id, null)
+      }
+    }
+  }
+
+  return {
+    events,
+    lanes,
+    years: syncedYears,
+  }
+}
+
+function createDefaultVerticalTimelineState(worldviewName = '') {
+  return sanitiseVerticalTimelineState(
+    {
+      events: [],
+      lanes: [],
+      years: DEFAULT_VERTICAL_TIMELINE_YEARS.map((year) => ({
+        ...year,
+        bubblesByLane: cloneVerticalTimelineBubbles(year.bubblesByLane),
+        months: year.months.map((month) => ({
+          ...month,
+          bubblesByLane: cloneVerticalTimelineBubbles(month.bubblesByLane),
+          days: month.days.map((day) => ({
+            ...day,
+            bubblesByLane: cloneVerticalTimelineBubbles(day.bubblesByLane),
+          })),
+        })),
+      })),
+    },
+    worldviewName,
+  )
+}
+
+function createVerticalTimelineLanesFromCharacterCards(characterCards) {
+  return characterCards.map((character) => ({
+    color: sanitiseVerticalTimelineColor(character.color, '#64748b'),
+    id: character.id,
+    name: sanitiseVerticalTimelineShortText(
+      character.name,
+      VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+      '未命名角色',
+    ),
+  }))
+}
+
+function hydrateVerticalTimelineStateWithCharacterCards(state, worldviewName) {
+  const lanes = createVerticalTimelineLanesFromCharacterCards(
+    statementSelectCharacterCardsForWorldview.all(worldviewName).map(serialiseCharacter),
+  )
+  const years = syncVerticalTimelineYearsWithLanes(state.years, lanes)
+  const laneIdSet = new Set(lanes.map((lane) => lane.id))
+  const nodeIdSet = new Set(flattenVerticalTimelineNodes(years).map((node) => node.id))
+  const events = state.events.filter((event) => laneIdSet.has(event.laneId) && nodeIdSet.has(event.nodeId))
+
+  return {
+    ...state,
+    events,
+    lanes,
+    years,
+  }
+}
+
+function upsertVerticalTimelineState(worldviewName, state, updatedByUserId, updatedAt = Date.now()) {
+  const safeState = sanitiseVerticalTimelineState(state, worldviewName) ?? createDefaultVerticalTimelineState(worldviewName)
+
+  statementUpsertVerticalTimelineState.run({
+    stateJson: JSON.stringify(safeState),
+    updatedAt,
+    updatedByUserId,
+    worldviewName,
+  })
+}
+
+function getVerticalTimelineState(worldviewName) {
+  const row = statementSelectVerticalTimelineState.get(worldviewName)
+
+  if (!row) {
+    return hydrateVerticalTimelineStateWithCharacterCards(
+      createDefaultVerticalTimelineState(worldviewName),
+      worldviewName,
+    )
+  }
+
+  try {
+    const safeState = sanitiseVerticalTimelineState(JSON.parse(row.stateJson), worldviewName)
+      ?? createDefaultVerticalTimelineState(worldviewName)
+
+    return hydrateVerticalTimelineStateWithCharacterCards(safeState, worldviewName)
+  } catch {
+    return hydrateVerticalTimelineStateWithCharacterCards(
+      createDefaultVerticalTimelineState(worldviewName),
+      worldviewName,
+    )
+  }
+}
+
+function ensureVerticalTimelineWorldviewInitialised(worldviewName) {
+  const row = statementSelectVerticalTimelineState.get(worldviewName)
+
+  if (row) {
+    return
+  }
+
+  upsertVerticalTimelineState(
+    worldviewName,
+    createDefaultVerticalTimelineState(worldviewName),
+    ADMIN_USER.id,
+    Date.now(),
+  )
+}
+
+function buildVerticalTimelineCapabilities(authContext, manageableLaneCount = 0) {
+  const isAdmin = authContext?.user.role === 'admin'
+
+  return {
+    canCreateEvent: isAdmin || manageableLaneCount > 0,
+    canManageLanePermissions: isAdmin,
+    canManageLanes: isAdmin,
+    canManageStructure: isAdmin,
+  }
+}
+
+function canManageVerticalTimelineLane(userId, laneId, worldviewName) {
+  if (!userId || laneId === '') {
+    return false
+  }
+
+  if (isAdminUser(userId)) {
+    return true
+  }
+
+  return statementSelectVerticalTimelineLanePermissionsForLane
+    .all(worldviewName, laneId)
+    .some((row) => row.userId === userId)
+}
+
+function buildVerticalTimelineLanePermissionsForViewer(worldviewName, lanes, isAdmin) {
+  if (!isAdmin) {
+    return []
+  }
+
+  const permissionsByLane = new Map(lanes.map((lane) => [lane.id, []]))
+
+  for (const row of statementSelectVerticalTimelineLanePermissionsForWorldview.all(worldviewName)) {
+    const userIds = permissionsByLane.get(row.laneId)
+
+    if (userIds) {
+      userIds.push(row.userId)
+    }
+  }
+
+  return lanes.map((lane) => ({
+    laneId: lane.id,
+    userIds: permissionsByLane.get(lane.id) ?? [],
+  }))
+}
+
+function buildVerticalTimelineStateForViewer(worldviewName, authContext) {
+  ensureVerticalTimelineWorldviewInitialised(worldviewName)
+
+  const row = statementSelectVerticalTimelineState.get(worldviewName)
+  const state = getVerticalTimelineState(worldviewName)
+  const viewerUserId = authContext?.user.id ?? ''
+  const isAdmin = viewerUserId !== '' && isAdminUser(viewerUserId)
+  const visibleLanes = viewerUserId === ''
+    ? []
+    : state.lanes
+        .filter((lane) => canManageVerticalTimelineLane(viewerUserId, lane.id, worldviewName))
+  const manageableLaneIds = visibleLanes.map((lane) => lane.id)
+  const visibleYears = syncVerticalTimelineYearsWithLanes(state.years, visibleLanes)
+  const visibleNodeIds = new Set(flattenVerticalTimelineNodes(visibleYears).map((node) => node.id))
+  const visibleEvents = state.events
+    .filter((event) => manageableLaneIds.includes(event.laneId))
+    .filter((event) => visibleNodeIds.has(event.nodeId))
+  const editableEventIds = visibleEvents.map((event) => event.id)
+  const editableNodeIds = isAdmin
+    ? flattenVerticalTimelineNodes(visibleYears).map((node) => node.id)
+    : []
+
+  return {
+    capabilities: buildVerticalTimelineCapabilities(authContext, manageableLaneIds.length),
+    lanePermissions: buildVerticalTimelineLanePermissionsForViewer(worldviewName, state.lanes, isAdmin),
+    manageableUsers: isAdmin ? getManageableUsers() : [],
+    permissions: {
+      editableEventIds,
+      editableNodeIds,
+      manageableLaneIds,
+    },
+    state: cloneVerticalTimelineState({
+      ...state,
+      events: visibleEvents,
+      lanes: visibleLanes,
+      years: visibleYears,
+    }),
+    updatedAt: Number(row?.updatedAt ?? 0),
+  }
+}
+
+function buildVerticalTimelineResponseHeaders(request, authContext, headers) {
+  return authContext?.shouldRefreshCookie
+    ? {
+        ...headers,
+        'Set-Cookie': buildSetCookieHeader(
+          request,
+          authContext.sessionToken,
+          Math.floor(AUTH_SESSION_TTL_MS / 1000),
+        ),
+      }
+    : headers
+}
+
+function writeVerticalTimelineViewerState(response, request, worldviewName, authContext, statusCode = 200) {
+  const headers = appendCorsHeaders(request)
+  const viewerState = buildVerticalTimelineStateForViewer(worldviewName, authContext)
+
+  writeJson(
+    response,
+    statusCode,
+    {
+      authenticated: Boolean(authContext?.user),
+      capabilities: viewerState.capabilities,
+      currentUser: authContext?.user ?? null,
+      lanePermissions: viewerState.lanePermissions,
+      manageableUsers: viewerState.manageableUsers,
+      ok: true,
+      permissions: viewerState.permissions,
+      state: viewerState.state,
+      updatedAt: viewerState.updatedAt,
+    },
+    {
+      headers: buildVerticalTimelineResponseHeaders(request, authContext, headers),
+    },
+  )
+}
+
+function getVerticalTimelinePointLabelByNodeId(years, nodeId) {
+  const node = findVerticalTimelineNode(years, nodeId)
+
+  if (!node) {
+    return ''
+  }
+
+  if (node.kind === 'year') {
+    return node.year.label
+  }
+
+  if (node.kind === 'month') {
+    return node.month?.label ?? ''
+  }
+
+  return node.day?.label ?? ''
+}
+
+function updateVerticalTimelineNodeLabel(years, nodeId, label) {
+  return years.map((year) => {
+    if (year.id === nodeId) {
+      return {
+        ...year,
+        label,
+      }
+    }
+
+    return {
+      ...year,
+      months: year.months.map((month) => {
+        if (month.id === nodeId) {
+          return {
+            ...month,
+            label,
+          }
+        }
+
+        return {
+          ...month,
+          days: month.days.map((day) =>
+            day.id === nodeId
+              ? {
+                  ...day,
+                  label,
+                }
+              : day,
+          ),
+        }
+      }),
+    }
+  })
+}
+
+function rebaseVerticalTimelineEventsForNode(events, years, nodeId) {
+  const label = getVerticalTimelinePointLabelByNodeId(years, nodeId)
+  const pointValue = parseVerticalTimelinePointValue(label)
+
+  return events.map((event) =>
+    event.nodeId === nodeId
+      ? {
+          ...event,
+          endTime: pointValue,
+          startTime: pointValue,
+        }
+      : event,
+  )
+}
+
+function removeVerticalTimelineLaneFromState(state, laneId) {
+  if (!state.lanes.some((lane) => lane.id === laneId)) {
+    return cloneVerticalTimelineState(state)
+  }
+
+  const nextLanes = state.lanes.filter((lane) => lane.id !== laneId)
+  const nextEvents = state.events.filter((event) => event.laneId !== laneId)
+  const nextYears = syncVerticalTimelineYearsWithLanes(state.years, nextLanes)
+
+  return {
+    ...cloneVerticalTimelineState(state),
+    events: nextEvents,
+    lanes: nextLanes,
+    years: nextYears,
+  }
+}
+
+function removeVerticalTimelineNodeFromState(state, nodeId) {
+  const removedNodeIds = new Set()
+
+  const collectMonthNodeIds = (month) => {
+    removedNodeIds.add(month.id)
+
+    for (const day of month.days) {
+      removedNodeIds.add(day.id)
+    }
+  }
+
+  const nextYears = state.years.flatMap((year) => {
+    if (year.id === nodeId) {
+      removedNodeIds.add(year.id)
+
+      for (const month of year.months) {
+        collectMonthNodeIds(month)
+      }
+
+      return []
+    }
+
+    const nextMonths = year.months.flatMap((month) => {
+      if (month.id === nodeId) {
+        collectMonthNodeIds(month)
+        return []
+      }
+
+      const nextDays = month.days.filter((day) => {
+        if (day.id === nodeId) {
+          removedNodeIds.add(day.id)
+          return false
+        }
+
+        return true
+      })
+
+      return [
+        {
+          ...month,
+          days: nextDays,
+        },
+      ]
+    })
+
+    return [
+      {
+        ...year,
+        months: nextMonths,
+      },
+    ]
+  })
+
+  if (removedNodeIds.size === 0) {
+    return null
+  }
+
+  const removedEventIds = state.events
+    .filter((event) => removedNodeIds.has(event.nodeId))
+    .map((event) => event.id)
+  const nextEvents = state.events.filter((event) => !removedNodeIds.has(event.nodeId))
+  let cleanedYears = nextYears
+
+  for (const eventId of removedEventIds) {
+    cleanedYears = clearVerticalTimelineEventReferences(cleanedYears, eventId)
+  }
+
+  return {
+    ...cloneVerticalTimelineState(state),
+    events: nextEvents,
+    years: cleanedYears,
+  }
+}
+
 function normaliseAvatarDataUrl(value) {
   const avatarDataUrl = String(value ?? '').trim()
 
@@ -2331,11 +3793,29 @@ function serialiseCharacter(row) {
       willpower: row.willpower,
     },
     avatarDataUrl: row.avatarDataUrl ?? null,
+    color: sanitiseVerticalTimelineColor(row.color, '#64748b'),
     id: row.id,
     isDefault: row.isDefault === 1,
     name: row.name,
     presentationMode: normalisePresentationMode(row.presentationMode),
     status: row.status,
+    userId: row.userId ?? null,
+    worldview: sanitiseVerticalTimelineWorldview(row.worldview),
+  }
+}
+
+function serialiseAdminCharacter(row) {
+  return {
+    ...serialiseCharacter(row),
+    createdAt: Number(row.createdAt ?? 0),
+    updatedAt: Number(row.updatedAt ?? 0),
+    user: {
+      displayName: row.userDisplayName,
+      handle: row.userHandle,
+      id: row.userId,
+      role: row.userRole,
+      status: row.userStatus,
+    },
   }
 }
 
@@ -2453,6 +3933,38 @@ function getCurrentUser(userId) {
 
 function getCharacterCardsForUser(userId) {
   return statementSelectCharacterCardsForUser.all(userId).map(serialiseCharacter)
+}
+
+function getCharacterCardsForWorldview(worldviewName) {
+  return statementSelectCharacterCardsForWorldview
+    .all(sanitiseVerticalTimelineWorldview(worldviewName))
+    .map(serialiseCharacter)
+}
+
+function ensureUserHasDefaultCharacter(userId) {
+  if (String(userId ?? '').trim() === '') {
+    return
+  }
+
+  const hasActiveCharacter = Number(statementCountActiveCharacterCardsForUser.get(userId)?.count ?? 0) > 0
+
+  if (!hasActiveCharacter) {
+    return
+  }
+
+  if (statementSelectDefaultCharacterCardForUser.get(userId)) {
+    return
+  }
+
+  const nextDefault = statementSelectFirstActiveCharacterCardForUser.get(userId)
+
+  if (!nextDefault) {
+    return
+  }
+
+  const updatedAt = Date.now()
+  statementClearDefaultCharacterCardsForUser.run({ updatedAt, userId })
+  statementSetDefaultCharacterCard.run({ id: nextDefault.id, updatedAt })
 }
 
 function createAuthSessionForUser(userId, accessKeyId, request) {
@@ -2574,10 +4086,17 @@ function normaliseCharacterAttributes(input) {
 
 function createCharacterCardForUser(userId, payload) {
   const name = sanitiseCharacterName(payload?.name)
+  const worldview = sanitiseVerticalTimelineWorldview(payload?.worldview)
 
   if (name === '') {
     return {
       error: '角色卡名称不能为空。',
+    }
+  }
+
+  if (worldview === '') {
+    return {
+      error: '角色卡必须绑定世界观。',
     }
   }
 
@@ -2596,14 +4115,16 @@ function createCharacterCardForUser(userId, payload) {
 
   statementInsertCharacterCard.run({
     createdAt: now,
+    color: sanitiseVerticalTimelineColor(payload?.color, '#64748b'),
     id: characterId,
     isDefault: existingCharacters.length === 0 ? 1 : 0,
     name,
     avatarDataUrl: avatarState.avatarDataUrl,
-    presentationMode: CHAT_PRESENTATION_BUBBLE,
+    presentationMode: normalisePresentationMode(payload?.presentationMode),
     status: 'active',
     updatedAt: now,
     userId,
+    worldview,
   })
 
   statementInsertCharacterAttributes.run({
@@ -2621,6 +4142,7 @@ function createCharacterCardForUser(userId, payload) {
 function updateCharacterCardForUser(userId, payload) {
   const characterId = String(payload?.characterId ?? '').trim()
   const name = sanitiseCharacterName(payload?.name)
+  const worldview = sanitiseVerticalTimelineWorldview(payload?.worldview)
 
   if (characterId === '') {
     return {
@@ -2631,6 +4153,12 @@ function updateCharacterCardForUser(userId, payload) {
   if (name === '') {
     return {
       error: '角色卡名称不能为空。',
+    }
+  }
+
+  if (worldview === '') {
+    return {
+      error: '角色卡必须绑定世界观。',
     }
   }
 
@@ -2654,11 +4182,14 @@ function updateCharacterCardForUser(userId, payload) {
   const updatedAt = Date.now()
 
   statementUpdateCharacterCard.run({
+    color: sanitiseVerticalTimelineColor(payload?.color, existingCharacter.color),
     id: characterId,
     name,
     avatarDataUrl: avatarState.avatarDataUrl,
+    presentationMode: normalisePresentationMode(payload?.presentationMode ?? existingCharacter.presentationMode),
     updatedAt,
     userId,
+    worldview,
   })
 
   statementUpdateCharacterAttributes.run({
@@ -2669,6 +4200,109 @@ function updateCharacterCardForUser(userId, payload) {
 
   return {
     characterId,
+  }
+}
+
+function updateCharacterCardAsAdmin(characterId, payload) {
+  const safeCharacterId = String(characterId ?? '').trim()
+  const existingCharacter = statementSelectCharacterCardById.get(safeCharacterId)
+
+  if (!existingCharacter) {
+    return {
+      error: '目标角色卡不存在。',
+    }
+  }
+
+  const userId = String(payload?.userId ?? existingCharacter.userId ?? '').trim()
+  const name = sanitiseCharacterName(payload?.name)
+  const worldview = sanitiseVerticalTimelineWorldview(payload?.worldview)
+
+  if (userId === '' || !statementSelectUser.get(userId)) {
+    return {
+      error: '角色归属用户不存在。',
+    }
+  }
+
+  if (name === '') {
+    return {
+      error: '角色卡名称不能为空。',
+    }
+  }
+
+  if (worldview === '') {
+    return {
+      error: '角色卡必须绑定世界观。',
+    }
+  }
+
+  if (existingCharacter.worldview !== worldview) {
+    return {
+      error: '已有角色卡暂不支持直接切换世界观，请在目标世界观新建角色卡后再迁移使用。',
+    }
+  }
+
+  const avatarState = normaliseAvatarDataUrl(payload?.avatarDataUrl)
+
+  if (avatarState.error) {
+    return {
+      error: avatarState.error,
+    }
+  }
+
+  const updatedAt = Date.now()
+  const attributes = normaliseCharacterAttributes(payload?.attributes)
+  const nextStatus = payload?.delete === true || payload?.status === 'archived' ? 'archived' : 'active'
+
+  statementAdminUpdateCharacterCard.run({
+    avatarDataUrl: avatarState.avatarDataUrl,
+    color: sanitiseVerticalTimelineColor(payload?.color, existingCharacter.color),
+    id: safeCharacterId,
+    name,
+    presentationMode: normalisePresentationMode(payload?.presentationMode ?? existingCharacter.presentationMode),
+    status: nextStatus,
+    updatedAt,
+    userId,
+    worldview,
+  })
+
+  statementUpdateCharacterAttributes.run({
+    ...attributes,
+    characterId: safeCharacterId,
+    updatedAt,
+  })
+
+  if (payload?.isDefault === true && nextStatus !== 'archived') {
+    statementClearDefaultCharacterCardsForUser.run({ updatedAt, userId })
+    statementSetDefaultCharacterCard.run({ id: safeCharacterId, updatedAt })
+  } else {
+    ensureUserHasDefaultCharacter(existingCharacter.userId)
+    ensureUserHasDefaultCharacter(userId)
+  }
+
+  return {
+    characterId: safeCharacterId,
+  }
+}
+
+function archiveCharacterCardAsAdmin(characterId) {
+  const safeCharacterId = String(characterId ?? '').trim()
+  const existingCharacter = statementSelectCharacterCardById.get(safeCharacterId)
+
+  if (!existingCharacter) {
+    return {
+      error: '目标角色卡不存在。',
+    }
+  }
+
+  statementArchiveCharacterCard.run({
+    id: safeCharacterId,
+    updatedAt: Date.now(),
+  })
+  ensureUserHasDefaultCharacter(existingCharacter.userId)
+
+  return {
+    characterId: safeCharacterId,
+    worldview: existingCharacter.worldview,
   }
 }
 
@@ -3166,8 +4800,8 @@ function handleUpdateRoomPermissions(state, socket, payload) {
   const nextAllowedUserIds = new Set(
     Array.isArray(payload.userIds)
       ? payload.userIds
-        .map((value) => String(value ?? '').trim())
-        .filter((value) => manageableUserIds.has(value))
+          .map((value) => String(value ?? '').trim())
+          .filter((value) => manageableUserIds.has(value))
       : [],
   )
   const existingMemberships = statementSelectRoomMembershipsForRoom.all(roomId)
@@ -3992,6 +5626,806 @@ async function handleAgeChronicleCellNoteSave(request, response) {
   writeAgeChronicleViewerState(response, request, worldviewName, authContext)
 }
 
+function handleVerticalTimelineStateGet(request, response, requestUrl) {
+  const worldviewName = sanitiseVerticalTimelineWorldview(requestUrl.searchParams.get('worldview'))
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers: appendCorsHeaders(request) })
+    return
+  }
+
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+}
+
+function handleAdminCharacterCardsGet(request, response) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext || authContext.user.role !== 'admin') {
+    writeJson(response, 401, { message: '无权访问', ok: false }, { headers })
+    return
+  }
+
+  try {
+    const worldviewName = sanitiseVerticalTimelineWorldview(new URL(request.url, `http://${request.headers.host || 'localhost'}`).searchParams.get('worldview'))
+    const userId = String(new URL(request.url, `http://${request.headers.host || 'localhost'}`).searchParams.get('userId') ?? '').trim()
+    const cards = statementSelectAllCharacterCardsForAdmin
+      .all()
+      .map(serialiseAdminCharacter)
+      .filter((card) => worldviewName === '' || card.worldview === worldviewName)
+      .filter((card) => userId === '' || card.user.id === userId)
+
+    writeJson(response, 200, {
+      cards,
+      ok: true,
+      users: statementSelectAllActiveUsersForAdmin.all().map(serialiseUser),
+    }, { headers })
+  } catch (error) {
+    writeJson(response, 500, { message: String(error), ok: false }, { headers })
+  }
+}
+
+async function handleAdminCharacterCardsCreate(request, response) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext || authContext.user.role !== 'admin') {
+    writeJson(response, 401, { message: '无权访问', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 64 * 1024)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '角色卡内容过大，请删减后再试。'
+      : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const userId = String(body?.userId ?? '').trim()
+
+  if (userId === '' || !statementSelectUser.get(userId)) {
+    writeJson(response, 400, { message: '角色归属用户不存在。', ok: false }, { headers })
+    return
+  }
+
+  const result = createCharacterCardForUser(userId, body)
+
+  if (result.error) {
+    writeJson(response, 400, { message: result.error, ok: false }, { headers })
+    return
+  }
+
+  writeJson(response, 200, {
+    characterId: result.characterId,
+    ok: true,
+  }, { headers })
+}
+
+async function handleAdminCharacterCardUpdate(request, response, characterId) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext || authContext.user.role !== 'admin') {
+    writeJson(response, 401, { message: '无权访问', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 64 * 1024)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '角色卡内容过大，请删减后再试。'
+      : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const result = updateCharacterCardAsAdmin(characterId, body)
+
+  if (result.error) {
+    writeJson(response, 400, { message: result.error, ok: false }, { headers })
+    return
+  }
+
+  writeJson(response, 200, {
+    characterId: result.characterId,
+    ok: true,
+  }, { headers })
+}
+
+function handleAdminCharacterCardDelete(request, response, characterId) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext || authContext.user.role !== 'admin') {
+    writeJson(response, 401, { message: '无权访问', ok: false }, { headers })
+    return
+  }
+
+  const result = archiveCharacterCardAsAdmin(characterId)
+
+  if (result.error) {
+    writeJson(response, 404, { message: result.error, ok: false }, { headers })
+    return
+  }
+
+  if (result.worldview) {
+    const nextState = removeVerticalTimelineLaneFromState(getVerticalTimelineState(result.worldview), result.characterId)
+    statementDeleteVerticalTimelineLanePermissionsForLane.run(result.worldview, result.characterId)
+    upsertVerticalTimelineState(result.worldview, nextState, authContext.user.id, Date.now())
+  }
+
+  writeJson(response, 200, { characterId: result.characterId, ok: true }, { headers })
+}
+
+async function handleVerticalTimelineLaneCreate(request, response) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '创建角色轨道需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  if (!isAdminUser(authContext.user.id)) {
+    writeJson(response, 403, { message: '只有管理员可以创建角色轨道。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 32 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '角色轨道内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseVerticalTimelineWorldview(body?.worldview)
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
+    return
+  }
+
+  ensureVerticalTimelineWorldviewInitialised(worldviewName)
+  const state = getVerticalTimelineState(worldviewName)
+
+  if (state.lanes.length >= VERTICAL_TIMELINE_MAX_LANE_COUNT) {
+    writeJson(response, 400, { message: '角色轨道数量已达到上限。', ok: false }, { headers })
+    return
+  }
+
+  const result = createCharacterCardForUser(authContext.user.id, {
+    attributes: body?.attributes,
+    color: body?.color,
+    name: body?.name,
+    worldview: worldviewName,
+  })
+
+  if (result.error) {
+    writeJson(response, 400, { message: result.error, ok: false }, { headers })
+    return
+  }
+
+  writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+}
+
+async function handleVerticalTimelineLaneUpdate(request, response, laneId) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '修改角色轨道需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  if (!isAdminUser(authContext.user.id)) {
+    writeJson(response, 403, { message: '只有管理员可以修改角色轨道。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 32 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '角色轨道内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseVerticalTimelineWorldview(body?.worldview)
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
+    return
+  }
+
+  ensureVerticalTimelineWorldviewInitialised(worldviewName)
+  const state = getVerticalTimelineState(worldviewName)
+  const currentLane = state.lanes.find((lane) => lane.id === laneId)
+
+  if (!currentLane) {
+    writeJson(response, 404, { message: '目标角色轨道不存在。', ok: false }, { headers })
+    return
+  }
+
+  if (body?.delete === true) {
+    const archiveResult = archiveCharacterCardAsAdmin(laneId)
+
+    if (archiveResult.error) {
+      writeJson(response, 404, { message: archiveResult.error, ok: false }, { headers })
+      return
+    }
+
+    const nextState = removeVerticalTimelineLaneFromState(state, laneId)
+    statementDeleteVerticalTimelineLanePermissionsForLane.run(worldviewName, laneId)
+    upsertVerticalTimelineState(worldviewName, nextState, authContext.user.id, Date.now())
+    writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+    return
+  }
+
+  const updateResult = updateCharacterCardAsAdmin(laneId, {
+    color: body?.color,
+    name: body?.name,
+    worldview: worldviewName,
+  })
+
+  if (updateResult.error) {
+    writeJson(response, 400, { message: updateResult.error, ok: false }, { headers })
+    return
+  }
+
+  writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+}
+
+async function handleVerticalTimelineLanePermissionsUpdate(request, response, laneId) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '修改轨道权限需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  if (!isAdminUser(authContext.user.id)) {
+    writeJson(response, 403, { message: '只有管理员可以修改轨道权限。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 32 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '轨道权限内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseVerticalTimelineWorldview(body?.worldview)
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
+    return
+  }
+
+  ensureVerticalTimelineWorldviewInitialised(worldviewName)
+  const state = getVerticalTimelineState(worldviewName)
+
+  if (!state.lanes.some((lane) => lane.id === laneId)) {
+    writeJson(response, 404, { message: '目标角色轨道不存在。', ok: false }, { headers })
+    return
+  }
+
+  const manageableUsers = getManageableUsers()
+  const manageableUserIds = new Set(manageableUsers.map((user) => user.id))
+  const nextUserIds = new Set(
+    Array.isArray(body?.userIds)
+      ? body.userIds
+          .map((value) => String(value ?? '').trim())
+          .filter((value) => manageableUserIds.has(value))
+      : [],
+  )
+  const existingRows = statementSelectVerticalTimelineLanePermissionsForLane.all(worldviewName, laneId)
+  const existingUserIds = new Set(existingRows.map((row) => row.userId))
+
+  for (const row of existingRows) {
+    if (nextUserIds.has(row.userId)) {
+      continue
+    }
+
+    statementDeleteVerticalTimelineLanePermission.run({
+      laneId,
+      userId: row.userId,
+      worldviewName,
+    })
+  }
+
+  for (const userId of nextUserIds) {
+    if (existingUserIds.has(userId)) {
+      continue
+    }
+
+    statementInsertVerticalTimelineLanePermission.run({
+      createdAt: Date.now(),
+      laneId,
+      userId,
+      worldviewName,
+    })
+  }
+
+  writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+}
+
+async function handleVerticalTimelineTimePointCreate(request, response) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '创建时间点需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 32 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '时间点内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseVerticalTimelineWorldview(body?.worldview)
+  const kind = ['year', 'month', 'day'].includes(body?.kind) ? body.kind : ''
+  const parentId = sanitiseVerticalTimelineShortText(body?.parentId, 96)
+
+  if (worldviewName === '' || kind === '') {
+    writeJson(response, 400, { message: '缺少必要的时间点信息。', ok: false }, { headers })
+    return
+  }
+
+  ensureVerticalTimelineWorldviewInitialised(worldviewName)
+  const state = getVerticalTimelineState(worldviewName)
+  const viewerState = buildVerticalTimelineStateForViewer(worldviewName, authContext)
+
+  if (!viewerState.capabilities.canManageStructure) {
+    writeJson(response, 403, { message: '当前账号没有创建时间点的权限。', ok: false }, { headers })
+    return
+  }
+
+  const label = sanitiseVerticalTimelineShortText(
+    body?.label,
+    VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+    kind === 'year' ? '新年份' : kind === 'month' ? '新月份' : '新日期',
+  )
+  const bubbleMap = createVerticalTimelineBubbleMapTemplate(state.lanes)
+  let nextYears = state.years
+
+  if (kind === 'year') {
+    nextYears = [
+      ...state.years,
+      {
+        bubblesByLane: bubbleMap,
+        id: createVerticalTimelineNodeId('year'),
+        label,
+        months: [],
+      },
+    ]
+  } else if (kind === 'month') {
+    const parentYear = state.years.find((year) => year.id === parentId)
+
+    if (!parentYear) {
+      writeJson(response, 404, { message: '目标年份不存在。', ok: false }, { headers })
+      return
+    }
+
+    nextYears = state.years.map((year) =>
+      year.id === parentId
+        ? {
+            ...year,
+            months: [
+              ...year.months,
+              {
+                bubblesByLane: bubbleMap,
+                days: [],
+                id: createVerticalTimelineNodeId('month'),
+                label,
+              },
+            ],
+          }
+        : year,
+    )
+  } else {
+    const parentNode = findVerticalTimelineNode(state.years, parentId)
+
+    if (!parentNode || parentNode.kind !== 'month' || !parentNode.month) {
+      writeJson(response, 404, { message: '目标月份不存在。', ok: false }, { headers })
+      return
+    }
+
+    nextYears = state.years.map((year) => ({
+      ...year,
+      months: year.months.map((month) =>
+        month.id === parentId
+          ? {
+              ...month,
+              days: [
+                ...month.days,
+                {
+                  bubblesByLane: bubbleMap,
+                  id: createVerticalTimelineNodeId('day'),
+                  label,
+                },
+              ],
+            }
+          : month,
+      ),
+    }))
+  }
+
+  upsertVerticalTimelineState(
+    worldviewName,
+    {
+      ...state,
+      years: nextYears,
+    },
+    authContext.user.id,
+    Date.now(),
+  )
+  writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+}
+
+async function handleVerticalTimelineTimePointUpdate(request, response, nodeId) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '修改时间点需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 32 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '时间点内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseVerticalTimelineWorldview(body?.worldview)
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
+    return
+  }
+
+  ensureVerticalTimelineWorldviewInitialised(worldviewName)
+  const state = getVerticalTimelineState(worldviewName)
+  const node = findVerticalTimelineNode(state.years, nodeId)
+
+  if (!node) {
+    writeJson(response, 404, { message: '目标时间点不存在。', ok: false }, { headers })
+    return
+  }
+
+  const viewerState = buildVerticalTimelineStateForViewer(worldviewName, authContext)
+  const isAdmin = isAdminUser(authContext.user.id)
+
+  if (body?.delete === true && !isAdmin) {
+    writeJson(response, 403, { message: '只有管理员可以删除时间点。', ok: false }, { headers })
+    return
+  }
+
+  if (
+    !isAdmin &&
+    !viewerState.permissions.editableNodeIds.includes(nodeId)
+  ) {
+    writeJson(response, 403, { message: '当前账号没有修改这个时间点的权限。', ok: false }, { headers })
+    return
+  }
+
+  if (body?.delete === true) {
+    const nextState = removeVerticalTimelineNodeFromState(state, nodeId)
+
+    if (!nextState) {
+      writeJson(response, 404, { message: '目标时间点不存在。', ok: false }, { headers })
+      return
+    }
+
+    upsertVerticalTimelineState(worldviewName, nextState, authContext.user.id, Date.now())
+    writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+    return
+  }
+
+  const currentLabel =
+    node.kind === 'year' ? node.year.label : node.kind === 'month' ? node.month?.label ?? '' : node.day?.label ?? ''
+  const nextLabel = sanitiseVerticalTimelineShortText(
+    body?.label,
+    VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+    currentLabel,
+  )
+  const nextYears = updateVerticalTimelineNodeLabel(state.years, nodeId, nextLabel)
+  const nextEvents = rebaseVerticalTimelineEventsForNode(state.events, nextYears, nodeId)
+
+  upsertVerticalTimelineState(
+    worldviewName,
+    {
+      ...state,
+      events: nextEvents,
+      years: nextYears,
+    },
+    authContext.user.id,
+    Date.now(),
+  )
+  writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+}
+
+async function handleVerticalTimelineEventCreate(request, response) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '创建事件需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 64 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '事件内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseVerticalTimelineWorldview(body?.worldview)
+  const laneId = sanitiseVerticalTimelineShortText(body?.laneId, 96)
+  const nodeId = sanitiseVerticalTimelineShortText(body?.nodeId, 96)
+
+  if (worldviewName === '' || laneId === '' || nodeId === '') {
+    writeJson(response, 400, { message: '缺少事件定位信息。', ok: false }, { headers })
+    return
+  }
+
+  ensureVerticalTimelineWorldviewInitialised(worldviewName)
+  const state = getVerticalTimelineState(worldviewName)
+
+  if (!canManageVerticalTimelineLane(authContext.user.id, laneId, worldviewName)) {
+    writeJson(response, 403, { message: '当前账号没有在这个轨道创建事件的权限。', ok: false }, { headers })
+    return
+  }
+
+  if (!findVerticalTimelineNode(state.years, nodeId)) {
+    writeJson(response, 404, { message: '目标时间点不存在。', ok: false }, { headers })
+    return
+  }
+
+  const occupiedBubble = getVerticalTimelineBubbleAtNode(state.years, nodeId, laneId)
+
+  if (occupiedBubble) {
+    writeJson(response, 409, { message: '这个时间点与轨道上已经存在事件。', ok: false }, { headers })
+    return
+  }
+
+  const title = sanitiseVerticalTimelineShortText(
+    body?.title,
+    VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+    '未命名事件',
+  )
+  const bodyText = sanitiseVerticalTimelineLongText(body?.body, VERTICAL_TIMELINE_MAX_BODY_LENGTH)
+  const nodeLabel = getVerticalTimelinePointLabelByNodeId(state.years, nodeId)
+  const pointValue = parseVerticalTimelinePointValue(nodeLabel)
+  const event = {
+    body: bodyText,
+    detailHtml: typeof body?.detailHtml === 'string'
+      ? sanitiseVerticalTimelineLongText(body.detailHtml, VERTICAL_TIMELINE_MAX_BODY_LENGTH * 2)
+      : undefined,
+    detailImage: typeof body?.detailImage === 'string'
+      ? sanitiseVerticalTimelineShortText(body.detailImage, 400)
+      : undefined,
+    endTime: pointValue,
+    id: createVerticalTimelineEventId(),
+    laneId,
+    nodeId,
+    startTime: pointValue,
+    summary: sanitiseVerticalTimelineShortText(
+      body?.summary,
+      VERTICAL_TIMELINE_MAX_SUMMARY_LENGTH,
+      deriveVerticalTimelineSummary(bodyText, title),
+    ),
+    tags: sanitiseVerticalTimelineTags(body?.tags),
+    title,
+    worldview: worldviewName,
+  }
+  const nextYears = setVerticalTimelineBubbleAtNode(state.years, nodeId, laneId, {
+    id: event.id,
+    title: event.title,
+  })
+
+  upsertVerticalTimelineState(
+    worldviewName,
+    {
+      ...state,
+      events: [...state.events, event],
+      years: nextYears,
+    },
+    authContext.user.id,
+    Date.now(),
+  )
+  writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+}
+
+async function handleVerticalTimelineEventUpdate(request, response, eventId) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '修改事件需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 128 * 1024)
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? '事件内容过大，请删减后再试。'
+        : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const worldviewName = sanitiseVerticalTimelineWorldview(body?.worldview)
+
+  if (worldviewName === '') {
+    writeJson(response, 400, { message: '缺少世界观名称。', ok: false }, { headers })
+    return
+  }
+
+  ensureVerticalTimelineWorldviewInitialised(worldviewName)
+  const state = getVerticalTimelineState(worldviewName)
+  const sourceEvent = state.events.find((event) => event.id === eventId)
+
+  if (!sourceEvent) {
+    writeJson(response, 404, { message: '目标事件不存在。', ok: false }, { headers })
+    return
+  }
+
+  if (!canManageVerticalTimelineLane(authContext.user.id, sourceEvent.laneId, worldviewName)) {
+    writeJson(response, 403, { message: '当前账号没有修改这个事件的权限。', ok: false }, { headers })
+    return
+  }
+
+  if (body?.delete === true) {
+    const nextYears = clearVerticalTimelineEventReferences(state.years, eventId)
+    upsertVerticalTimelineState(
+      worldviewName,
+      {
+        ...state,
+        events: state.events.filter((event) => event.id !== eventId),
+        years: nextYears,
+      },
+      authContext.user.id,
+      Date.now(),
+    )
+    writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+    return
+  }
+
+  const targetLaneId = sanitiseVerticalTimelineShortText(body?.laneId, 96, sourceEvent.laneId)
+  const targetNodeId = sanitiseVerticalTimelineShortText(body?.nodeId, 96, sourceEvent.nodeId)
+
+  if (!canManageVerticalTimelineLane(authContext.user.id, targetLaneId, worldviewName)) {
+    writeJson(response, 403, { message: '当前账号没有移动到目标轨道的权限。', ok: false }, { headers })
+    return
+  }
+
+  if (!findVerticalTimelineNode(state.years, targetNodeId)) {
+    writeJson(response, 404, { message: '目标时间点不存在。', ok: false }, { headers })
+    return
+  }
+
+  const occupiedBubble = getVerticalTimelineBubbleAtNode(state.years, targetNodeId, targetLaneId)
+
+  if (occupiedBubble && occupiedBubble.id !== eventId) {
+    writeJson(response, 409, { message: '目标时间点与轨道上已经存在其它事件。', ok: false }, { headers })
+    return
+  }
+
+  const title = sanitiseVerticalTimelineShortText(
+    body?.title,
+    VERTICAL_TIMELINE_MAX_LABEL_LENGTH,
+    sourceEvent.title,
+  )
+  const nextBody = body?.body === undefined
+    ? sourceEvent.body
+    : sanitiseVerticalTimelineLongText(body.body, VERTICAL_TIMELINE_MAX_BODY_LENGTH)
+  const nextSummary = sanitiseVerticalTimelineShortText(
+    body?.summary,
+    VERTICAL_TIMELINE_MAX_SUMMARY_LENGTH,
+    deriveVerticalTimelineSummary(nextBody, title),
+  )
+  const nextPointValue = parseVerticalTimelinePointValue(
+    getVerticalTimelinePointLabelByNodeId(state.years, targetNodeId),
+  )
+  const nextDetailHtml = body?.detailHtml === undefined
+    ? sourceEvent.detailHtml
+    : sanitiseVerticalTimelineLongText(body.detailHtml, VERTICAL_TIMELINE_MAX_BODY_LENGTH * 2)
+  const nextDetailImage = body?.detailImage === undefined
+    ? sourceEvent.detailImage
+    : sanitiseVerticalTimelineShortText(body.detailImage, 400)
+  let nextYears = clearVerticalTimelineEventReferences(state.years, eventId)
+  nextYears = setVerticalTimelineBubbleAtNode(nextYears, targetNodeId, targetLaneId, {
+    id: eventId,
+    title,
+  })
+  const nextEvents = state.events.map((event) =>
+    event.id === eventId
+      ? {
+          ...event,
+          body: nextBody,
+          detailHtml: nextDetailHtml,
+          detailImage: nextDetailImage,
+          endTime: nextPointValue,
+          laneId: targetLaneId,
+          nodeId: targetNodeId,
+          startTime: nextPointValue,
+          summary: nextSummary,
+          tags: body?.tags === undefined ? event.tags : sanitiseVerticalTimelineTags(body.tags),
+          title,
+          worldview: worldviewName,
+        }
+      : event,
+  )
+
+  upsertVerticalTimelineState(
+    worldviewName,
+    {
+      ...state,
+      events: nextEvents,
+      years: nextYears,
+    },
+    authContext.user.id,
+    Date.now(),
+  )
+  writeVerticalTimelineViewerState(response, request, worldviewName, authContext)
+}
+
 const server = http.createServer((request, response) => {
   const requestUrl = new URL(request.url ?? '/', `http://${getRequestHost(request)}`)
 
@@ -4038,6 +6472,56 @@ const server = http.createServer((request, response) => {
     return
   }
 
+  if (request.method === 'GET' && requestUrl.pathname === '/api/vertical-timeline/state') {
+    handleVerticalTimelineStateGet(request, response, requestUrl)
+    return
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/vertical-timeline/lanes') {
+    void handleVerticalTimelineLaneCreate(request, response)
+    return
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/vertical-timeline/time-points') {
+    void handleVerticalTimelineTimePointCreate(request, response)
+    return
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/vertical-timeline/events') {
+    void handleVerticalTimelineEventCreate(request, response)
+    return
+  }
+
+  if (request.method === 'GET' && requestUrl.pathname === '/api/admin/character-cards') {
+    handleAdminCharacterCardsGet(request, response)
+    return
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/admin/character-cards') {
+    void handleAdminCharacterCardsCreate(request, response)
+    return
+  }
+
+  const adminCharacterCardMatch = /^\/api\/admin\/character-cards\/([^/]+)$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PATCH' && adminCharacterCardMatch) {
+    void handleAdminCharacterCardUpdate(
+      request,
+      response,
+      decodeURIComponent(adminCharacterCardMatch[1]),
+    )
+    return
+  }
+
+  if (request.method === 'DELETE' && adminCharacterCardMatch) {
+    handleAdminCharacterCardDelete(
+      request,
+      response,
+      decodeURIComponent(adminCharacterCardMatch[1]),
+    )
+    return
+  }
+
   const ageChronicleEntryMatch = /^\/api\/age-chronicle\/entries\/([^/]+)$/u.exec(requestUrl.pathname)
 
   if (request.method === 'PATCH' && ageChronicleEntryMatch) {
@@ -4045,6 +6529,52 @@ const server = http.createServer((request, response) => {
       request,
       response,
       decodeURIComponent(ageChronicleEntryMatch[1]),
+    )
+    return
+  }
+
+  const verticalTimelineLaneMatch = /^\/api\/vertical-timeline\/lanes\/([^/]+)$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PATCH' && verticalTimelineLaneMatch) {
+    void handleVerticalTimelineLaneUpdate(
+      request,
+      response,
+      decodeURIComponent(verticalTimelineLaneMatch[1]),
+    )
+    return
+  }
+
+  const verticalTimelineLanePermissionsMatch =
+    /^\/api\/vertical-timeline\/lanes\/([^/]+)\/permissions$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PUT' && verticalTimelineLanePermissionsMatch) {
+    void handleVerticalTimelineLanePermissionsUpdate(
+      request,
+      response,
+      decodeURIComponent(verticalTimelineLanePermissionsMatch[1]),
+    )
+    return
+  }
+
+  const verticalTimelineTimePointMatch =
+    /^\/api\/vertical-timeline\/time-points\/([^/]+)$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PATCH' && verticalTimelineTimePointMatch) {
+    void handleVerticalTimelineTimePointUpdate(
+      request,
+      response,
+      decodeURIComponent(verticalTimelineTimePointMatch[1]),
+    )
+    return
+  }
+
+  const verticalTimelineEventMatch = /^\/api\/vertical-timeline\/events\/([^/]+)$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PATCH' && verticalTimelineEventMatch) {
+    void handleVerticalTimelineEventUpdate(
+      request,
+      response,
+      decodeURIComponent(verticalTimelineEventMatch[1]),
     )
     return
   }
@@ -4058,6 +6588,10 @@ const server = http.createServer((request, response) => {
         authAccessKey: '/api/auth/access-key',
         authMe: '/api/auth/me',
         health: '/api/health',
+        verticalTimelineEvents: '/api/vertical-timeline/events',
+        verticalTimelineLanes: '/api/vertical-timeline/lanes',
+        verticalTimelineState: '/api/vertical-timeline/state',
+        verticalTimelineTimePoints: '/api/vertical-timeline/time-points',
         websocket: '/ws',
       },
       message: '群聊服务正在运行。请通过前端页面访问群聊，或用 /api/health 检查服务状态。',

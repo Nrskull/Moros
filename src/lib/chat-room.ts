@@ -35,11 +35,14 @@ export interface ChatCharacterAttributes {
 export interface ChatCharacterCard {
   attributes: ChatCharacterAttributes
   avatarDataUrl: string | null
+  color: string
   id: string
   isDefault: boolean
   name: string
   presentationMode: ChatPresentationMode
   status: string
+  userId?: string | null
+  worldview: string
 }
 
 export interface ChatMessage {

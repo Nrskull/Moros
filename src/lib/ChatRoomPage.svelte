@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte'
+  import { worldviewContents } from '../content/worldviews'
   import {
     buildChatHttpUrl,
     buildChatWebSocketUrl,
@@ -19,6 +20,7 @@
     type ChatRoom,
     type ChatUser,
   } from './chat-room'
+  import { confirmDialog } from './dialog'
 
   type AttributeKey = keyof ChatCharacterAttributes
 
@@ -136,6 +138,8 @@
     retryAfterMs?: number
   }
 
+  export let onOpenAdminCharacterPage: (() => void) | undefined = undefined
+
   const ROOM_PLACEHOLDER: ChatRoom = {
     createdAt: 0,
     id: PUBLIC_CHAT_ROOM_ID,
@@ -158,6 +162,8 @@
 
   const AVATAR_CROP_VIEWPORT_SIZE = 220
   const AVATAR_CROP_OUTPUT_SIZE = 320
+  const DEFAULT_CHARACTER_WORLDVIEW = worldviewContents[0]?.name ?? ''
+  const DEFAULT_CHARACTER_COLOR = '#64748b'
 
   let characterMenuElement: HTMLDivElement | null = null
   let composerTextareaElement: HTMLTextAreaElement | null = null
@@ -202,6 +208,8 @@
   let roomPermissionsError = ''
   let isCreateCharacterPromptOpen = false
   let createCharacterNameDraft = ''
+  let createCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+  let createCharacterColorDraft = DEFAULT_CHARACTER_COLOR
   let createCharacterError = ''
   let createCharacterAttributesDraft: ChatCharacterAttributes = createEmptyCharacterAttributes()
   let createCharacterAvatarInputElement: HTMLInputElement | null = null
@@ -209,6 +217,8 @@
   let isEditCharacterPromptOpen = false
   let editCharacterId = ''
   let editCharacterNameDraft = ''
+  let editCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+  let editCharacterColorDraft = DEFAULT_CHARACTER_COLOR
   let editCharacterError = ''
   let editCharacterAttributesDraft: ChatCharacterAttributes = createEmptyCharacterAttributes()
   let editCharacterAvatarInputElement: HTMLInputElement | null = null
@@ -393,7 +403,7 @@
     )
   }
 
-  function clearRoomHistory(): void {
+  async function clearRoomHistory(): Promise<void> {
     if (roomPermissionsRoomId === '') {
       roomPermissionsError = '目标房间不存在。'
       return
@@ -411,7 +421,7 @@
 
     const selectedRoom = roomList.find((entry) => entry.id === roomPermissionsRoomId)
     const roomName = selectedRoom?.name ?? '当前房间'
-    const confirmed = window.confirm(`确定要清空「${roomName}」的全部聊天记录吗？该操作不可撤销。`)
+    const confirmed = await confirmDialog(`确定要清空「${roomName}」的全部聊天记录吗？该操作不可撤销。`)
 
     if (!confirmed) {
       return
@@ -441,6 +451,10 @@
     closeCharacterEditorOnNextState = false
     createCharacterError = ''
     editCharacterError = ''
+    createCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+    createCharacterColorDraft = DEFAULT_CHARACTER_COLOR
+    editCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+    editCharacterColorDraft = DEFAULT_CHARACTER_COLOR
     clearCreateCharacterAvatar()
     clearEditCharacterAvatar()
   }
@@ -813,13 +827,13 @@
     }
   }
 
-  function revokeMessage(message: ChatMessage): void {
+  async function revokeMessage(message: ChatMessage): Promise<void> {
     if (!canRevokeMessage(message)) {
       closeMessageActionMenu()
       return
     }
 
-    const confirmed = window.confirm('确定要撤回这条消息吗？')
+    const confirmed = await confirmDialog('确定要撤回这条消息吗？')
 
     if (!confirmed) {
       return
@@ -1155,6 +1169,36 @@
     }
 
     editCharacterNameDraft = target.value
+  }
+
+  function handleCharacterWorldviewInput(event: Event): void {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLSelectElement) && !(target instanceof HTMLInputElement)) {
+      return
+    }
+
+    if (isCreateCharacterPromptOpen) {
+      createCharacterWorldviewDraft = target.value
+      return
+    }
+
+    editCharacterWorldviewDraft = target.value
+  }
+
+  function handleCharacterColorInput(event: Event): void {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLInputElement)) {
+      return
+    }
+
+    if (isCreateCharacterPromptOpen) {
+      createCharacterColorDraft = target.value
+      return
+    }
+
+    editCharacterColorDraft = target.value
   }
 
   function clearCreateCharacterAvatar(): void {
@@ -1633,6 +1677,8 @@
     closeCharacterEditorOnNextState = false
     clearCreateCharacterAvatar()
     createCharacterNameDraft = ''
+    createCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+    createCharacterColorDraft = DEFAULT_CHARACTER_COLOR
     createCharacterAttributesDraft = createEmptyCharacterAttributes()
     createCharacterError = ''
     isCreateCharacterPromptOpen = true
@@ -1646,6 +1692,8 @@
     clearEditCharacterAvatar()
     editCharacterId = character.id
     editCharacterNameDraft = character.name
+    editCharacterWorldviewDraft = character.worldview || DEFAULT_CHARACTER_WORLDVIEW
+    editCharacterColorDraft = character.color || DEFAULT_CHARACTER_COLOR
     editCharacterAttributesDraft = cloneCharacterAttributes(character.attributes)
     editCharacterAvatarDataUrl = character.avatarDataUrl ?? ''
     editCharacterError = ''
@@ -1811,9 +1859,15 @@
 
   function submitCreateCharacter(): void {
     const characterName = sanitiseCharacterName(createCharacterNameDraft)
+    const worldviewName = createCharacterWorldviewDraft.trim()
 
     if (characterName === '') {
       createCharacterError = '请输入角色卡名称后再创建。'
+      return
+    }
+
+    if (worldviewName === '') {
+      createCharacterError = '请选择角色卡所属世界观。'
       return
     }
 
@@ -1829,7 +1883,9 @@
       JSON.stringify({
         attributes: createCharacterAttributesDraft,
         avatarDataUrl: createCharacterAvatarDataUrl || null,
+        color: createCharacterColorDraft,
         name: characterName,
+        worldview: worldviewName,
         type: 'create_character_card',
       }),
     )
@@ -1837,6 +1893,7 @@
 
   function submitEditCharacter(): void {
     const characterName = sanitiseCharacterName(editCharacterNameDraft)
+    const worldviewName = editCharacterWorldviewDraft.trim()
 
     if (editCharacterId === '') {
       editCharacterError = '目标角色卡不存在。'
@@ -1845,6 +1902,11 @@
 
     if (characterName === '') {
       editCharacterError = '请输入角色卡名称后再保存。'
+      return
+    }
+
+    if (worldviewName === '') {
+      editCharacterError = '请选择角色卡所属世界观。'
       return
     }
 
@@ -1861,7 +1923,9 @@
         attributes: editCharacterAttributesDraft,
         avatarDataUrl: editCharacterAvatarDataUrl || null,
         characterId: editCharacterId,
+        color: editCharacterColorDraft,
         name: characterName,
+        worldview: worldviewName,
         type: 'update_character_card',
       }),
     )
@@ -1971,6 +2035,15 @@
           </div>
           <div class="chat-panel-head-actions">
             <span>{roomList.length} 个房间</span>
+              {#if isAdminUser && onOpenAdminCharacterPage}
+                <button
+                  class="toolbar-action"
+                  type="button"
+                  onclick={() => onOpenAdminCharacterPage?.()}
+                >
+                  角色后台
+                </button>
+              {/if}
             <button
               class="toolbar-action"
               disabled={connectionState !== 'connected'}
@@ -2053,6 +2126,29 @@
                   value={isCreateCharacterPromptOpen ? createCharacterNameDraft : editCharacterNameDraft}
                 />
               </label>
+
+              <div class="chat-character-grid">
+                <label class="chat-character-field">
+                  <span>所属世界观</span>
+                  <select
+                    oninput={handleCharacterWorldviewInput}
+                    value={isCreateCharacterPromptOpen ? createCharacterWorldviewDraft : editCharacterWorldviewDraft}
+                  >
+                    {#each worldviewContents as worldview}
+                      <option value={worldview.name}>{worldview.name}</option>
+                    {/each}
+                  </select>
+                </label>
+
+                <label class="chat-character-field">
+                  <span>轨道颜色</span>
+                  <input
+                    oninput={handleCharacterColorInput}
+                    type="color"
+                    value={isCreateCharacterPromptOpen ? createCharacterColorDraft : editCharacterColorDraft}
+                  />
+                </label>
+              </div>
 
               <div class="chat-character-avatar-block">
                 <div>

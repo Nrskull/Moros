@@ -12,6 +12,7 @@
     type EditableLogEntry,
     type SealDiceStandardLog,
   } from './log-workbench'
+  import { confirmDialog } from './dialog'
 
   type LogWorkbenchView = 'edit' | 'overview' | 'play'
 
@@ -491,14 +492,14 @@
     }
   }
 
-  function removeLogRecord(recordId: string): void {
+  async function removeLogRecord(recordId: string): Promise<void> {
     const record = logRecords.find((item) => item.id === recordId)
 
     if (!record) {
       return
     }
 
-    const shouldDelete = window.confirm(`确认删除“${record.title}”吗？此操作只会删除当前页面内的运行时记录。`)
+    const shouldDelete = await confirmDialog(`确认删除“${record.title}”吗？此操作只会删除当前页面内的运行时记录。`)
 
     if (!shouldDelete) {
       return

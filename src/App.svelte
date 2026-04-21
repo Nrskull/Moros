@@ -8,6 +8,7 @@
     type WorldviewContent,
   } from './content/worldviews'
   import AgeChroniclePage from './lib/AgeChroniclePage.svelte'
+  import AdminCharacterPage from './lib/AdminCharacterPage.svelte'
   import ChatRoomPage from './lib/ChatRoomPage.svelte'
   import EventDetailPage from './lib/EventDetailPage.svelte'
   import HomePage from './lib/HomePage.svelte'
@@ -18,6 +19,7 @@
   import WorldviewHero from './lib/WorldviewHero.svelte'
   import { mockEvents } from './lib/mock-events'
   import { seaFogIn, seaFogOut } from './lib/transitions'
+  import { confirmDialog, alertDialog } from './lib/dialog'
   import {
     buildAppRouteHref,
     parseAppRoute,
@@ -94,16 +96,6 @@
   const DEFAULT_WORLDVIEW_NAME = '未分类世界观'
   const FIXED_LAYOUT_SURFACE_PADDING = 64
   const TRACK_LEADING_GUTTER = 132
-  const CHAT_NAV_FLOAT_SIZE = 58
-  const CHAT_NAV_FLOAT_MARGIN = 18
-  const chatNavPages: Array<{ label: string; page: AppPage }> = [
-    { page: 'home', label: '首页' },
-    { page: 'timeline', label: '故事时间轴' },
-    { page: 'vertical-timeline', label: '垂直时间轴' },
-    { page: 'age-chronicle', label: '角色年龄编年' },
-    { page: 'log-workbench', label: '日志展示' },
-    { page: 'chat-room', label: '群聊' },
-  ]
   const defaultTrackPalette = ['#d9e0e6', '#c8dce6', '#d5cae6', '#d1e3d3', '#e1d8e6', '#dde3e8']
   const defaultTrackLabels = ['公共线1', '公共线2', '其它线1', 'ho404线']
   const activeCardBounce = spring(0, { stiffness: 0.22, damping: 0.58 })
@@ -256,7 +248,6 @@
   let timelineSurfaceElement: HTMLDivElement | null = null
   let worldviewMenuElement: HTMLDivElement | null = null
   let tagFilterContainerElement: HTMLDivElement | null = null
-  let chatNavElement: HTMLDivElement | null = null
 
   let timelineTracks: TimelineTrack[] = initialTimelineState.tracks
   let timelineEvents: EditableTimelineEvent[] = initialTimelineState.events
@@ -280,19 +271,6 @@
   let dragDistance = 0
   let suppressClick = false
   let snapTimer: ReturnType<typeof setTimeout> | null = null
-  let isChatNavMenuOpen = false
-  let hasInitialisedChatNavPosition = false
-  let chatNavPositionX = 0
-  let chatNavPositionY = 0
-  let chatNavMenuSide: 'left' | 'right' = 'left'
-  let chatNavPointerId: number | null = null
-  let chatNavPointerOriginX = 0
-  let chatNavPointerOriginY = 0
-  let chatNavOriginX = 0
-  let chatNavOriginY = 0
-  let chatNavMoved = false
-  let suppressChatNavClick = false
-  let chatNavPointerTarget: HTMLElement | null = null
 
   let drawerMode: DrawerMode = 'none'
   let eventEditorMode: EventEditorMode = 'create'
@@ -468,7 +446,7 @@
     }, 0)
   }
 
-  function removeTrack(trackId: string): void {
+  async function removeTrack(trackId: string): Promise<void> {
     const trackIndex = timelineTracks.findIndex((track) => track.id === trackId)
 
     if (timelineMode !== 'edit' || trackIndex <= 0 || timelineTracks.length <= 1) {
@@ -480,9 +458,9 @@
     const movedEvents = sortEditableEvents(timelineEvents.filter((event) => event.trackId === trackId))
     const allowDelete =
       typeof window === 'undefined' ||
-      window.confirm(
+      (await confirmDialog(
         `确认删除“${removedTrack.label}”吗？该轨道上的事件会被移动到“${previousTrack.label}”的末尾。`,
-      )
+      ))
 
     if (!allowDelete) {
       return
@@ -555,7 +533,7 @@
     editingEventId = ''
   }
 
-  function saveWorldviewDraft(): void {
+  async function saveWorldviewDraft(): Promise<void> {
     const name = draftWorldviewName.trim()
     const description = draftWorldviewDescription.trim()
     const tags = serialiseTags(draftWorldviewTagsText)
@@ -567,7 +545,7 @@
 
     if (worldviewOptions.includes(name)) {
       if (typeof window !== 'undefined') {
-        window.alert(`世界观“${name}”已经存在。`)
+        await alertDialog(`世界观“${name}”已经存在。`)
       }
       return
     }
@@ -632,14 +610,14 @@
     replaceRouteFromState()
   }
 
-  function deleteEvent(eventId: string): void {
+  async function deleteEvent(eventId: string): Promise<void> {
     const targetEvent = timelineEvents.find((event) => event.id === eventId)
     if (!targetEvent) {
       return
     }
 
     const allowDelete =
-      typeof window === 'undefined' || window.confirm(`确认删除“${targetEvent.title}”吗？`)
+      typeof window === 'undefined' || (await confirmDialog(`确认删除“${targetEvent.title}”吗？`))
 
     if (!allowDelete) {
       return
@@ -665,11 +643,6 @@
       return
     }
 
-    if (activePage === 'chat-room' && isChatNavMenuOpen) {
-      isChatNavMenuOpen = false
-      return
-    }
-
     if (drawerMode !== 'none') {
       closeDrawer()
       return
@@ -691,10 +664,6 @@
       return
     }
 
-    if (activePage === 'chat-room' && isChatNavMenuOpen && chatNavElement && !chatNavElement.contains(target)) {
-      isChatNavMenuOpen = false
-    }
-
     if (isWorldviewMenuOpen && worldviewMenuElement && !worldviewMenuElement.contains(target)) {
       isWorldviewMenuOpen = false
     }
@@ -702,136 +671,6 @@
     if (isTagFilterOpen && tagFilterContainerElement && !tagFilterContainerElement.contains(target)) {
       isTagFilterOpen = false
     }
-  }
-
-  function clampChatNavPosition(x: number, y: number): { x: number; y: number } {
-    if (typeof window === 'undefined') {
-      return { x, y }
-    }
-
-    const maxX = Math.max(CHAT_NAV_FLOAT_MARGIN, window.innerWidth - CHAT_NAV_FLOAT_SIZE - CHAT_NAV_FLOAT_MARGIN)
-    const maxY = Math.max(CHAT_NAV_FLOAT_MARGIN, window.innerHeight - CHAT_NAV_FLOAT_SIZE - CHAT_NAV_FLOAT_MARGIN)
-
-    return {
-      x: Math.min(maxX, Math.max(CHAT_NAV_FLOAT_MARGIN, x)),
-      y: Math.min(maxY, Math.max(CHAT_NAV_FLOAT_MARGIN, y)),
-    }
-  }
-
-  function initialiseChatNavPosition(): void {
-    if (typeof window === 'undefined') {
-      return
-    }
-
-    const defaultPosition = clampChatNavPosition(
-      window.innerWidth - CHAT_NAV_FLOAT_SIZE - CHAT_NAV_FLOAT_MARGIN,
-      Math.round(window.innerHeight * 0.38),
-    )
-
-    chatNavPositionX = defaultPosition.x
-    chatNavPositionY = defaultPosition.y
-    chatNavMenuSide = resolveChatNavMenuSide(defaultPosition.x)
-    hasInitialisedChatNavPosition = true
-  }
-
-  function resolveChatNavMenuSide(positionX = chatNavPositionX): 'left' | 'right' {
-    if (typeof window === 'undefined') {
-      return 'left'
-    }
-
-    const menuWidth = 176
-    const horizontalGap = 12
-    const leftSpace = positionX - CHAT_NAV_FLOAT_MARGIN
-    const rightSpace = window.innerWidth - positionX - CHAT_NAV_FLOAT_SIZE - CHAT_NAV_FLOAT_MARGIN
-
-    if (rightSpace >= menuWidth + horizontalGap || rightSpace >= leftSpace) {
-      return 'right'
-    }
-
-    return 'left'
-  }
-
-  function toggleChatNavMenu(): void {
-    if (suppressChatNavClick) {
-      suppressChatNavClick = false
-      return
-    }
-
-    isChatNavMenuOpen = !isChatNavMenuOpen
-  }
-
-  function navigateFromChatNav(page: AppPage): void {
-    isChatNavMenuOpen = false
-    navigateToPage(page)
-  }
-
-  function handleChatNavPointerDown(event: PointerEvent): void {
-    if (event.button !== 0) {
-      return
-    }
-
-    chatNavPointerId = event.pointerId
-    chatNavPointerOriginX = event.clientX
-    chatNavPointerOriginY = event.clientY
-    chatNavOriginX = chatNavPositionX
-    chatNavOriginY = chatNavPositionY
-    chatNavMoved = false
-    suppressChatNavClick = false
-    chatNavPointerTarget = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
-    chatNavPointerTarget?.setPointerCapture(event.pointerId)
-  }
-
-  function finishChatNavDrag(pointerId?: number): void {
-    if (chatNavPointerId === null) {
-      return
-    }
-
-    if (pointerId !== undefined && chatNavPointerTarget?.hasPointerCapture(pointerId)) {
-      chatNavPointerTarget.releasePointerCapture(pointerId)
-    }
-
-    chatNavPointerId = null
-    chatNavPointerTarget = null
-  }
-
-  function handleWindowPointerMove(event: PointerEvent): void {
-    if (chatNavPointerId !== event.pointerId) {
-      return
-    }
-
-    const offsetX = event.clientX - chatNavPointerOriginX
-    const offsetY = event.clientY - chatNavPointerOriginY
-
-    if (!chatNavMoved && Math.hypot(offsetX, offsetY) >= 4) {
-      chatNavMoved = true
-      suppressChatNavClick = true
-      isChatNavMenuOpen = false
-    }
-
-    if (!chatNavMoved) {
-      return
-    }
-
-    const nextPosition = clampChatNavPosition(chatNavOriginX + offsetX, chatNavOriginY + offsetY)
-    chatNavPositionX = nextPosition.x
-    chatNavPositionY = nextPosition.y
-    chatNavMenuSide = resolveChatNavMenuSide(nextPosition.x)
-  }
-
-  function handleWindowResize(): void {
-    if (activePage !== 'chat-room') {
-      return
-    }
-
-    if (!hasInitialisedChatNavPosition) {
-      initialiseChatNavPosition()
-      return
-    }
-
-    const nextPosition = clampChatNavPosition(chatNavPositionX, chatNavPositionY)
-    chatNavPositionX = nextPosition.x
-    chatNavPositionY = nextPosition.y
-    chatNavMenuSide = resolveChatNavMenuSide(nextPosition.x)
   }
 
   function resolveWorldviewContent(name: string): WorldviewContent {
@@ -856,8 +695,12 @@
     }
   }
 
+  function normaliseVisiblePage(page: AppPage): AppPage {
+    return page === 'timeline' ? 'vertical-timeline' : page
+  }
+
   function getRouteWorldviewName(targetPage: AppPage = activePage): string | null {
-    if (['home', 'chat-room', 'vertical-timeline'].includes(targetPage)) {
+    if (['home', 'chat-room'].includes(normaliseVisiblePage(targetPage))) {
       return null
     }
 
@@ -868,7 +711,7 @@
   function getCurrentRouteHref(targetPage: AppPage = activePage, targetDetailEventId = detailEventId): string {
     return buildAppRouteHref({
       eventId: targetDetailEventId,
-      page: targetPage,
+      page: normaliseVisiblePage(targetPage),
       worldviewName: getRouteWorldviewName(targetPage),
     })
   }
@@ -904,20 +747,21 @@
   }
 
   function applyRoute(route: { eventId: string; page: AppPage; worldviewName: string | null }): void {
+    const nextPage = normaliseVisiblePage(route.page)
     const detailEvent =
-      route.page === 'event-detail'
+      nextPage === 'event-detail'
         ? timelineEvents.find((event) => event.id === route.eventId) ?? null
         : null
 
-    activePage = route.page
-    detailEventId = route.page === 'event-detail' ? route.eventId : ''
+    activePage = nextPage
+    detailEventId = nextPage === 'event-detail' ? route.eventId : ''
     routeWorldviewName = route.worldviewName ?? detailEvent?.worldview ?? null
 
-    if (route.page !== 'event-detail') {
+    if (nextPage !== 'event-detail') {
       drawerMode = drawerMode === 'event' ? 'none' : drawerMode
     }
 
-    if (['home', 'chat-room', 'vertical-timeline'].includes(route.page)) {
+    if (['home', 'chat-room'].includes(nextPage)) {
       isWorldviewMenuOpen = false
       isTagFilterOpen = false
     }
@@ -941,18 +785,19 @@
   }
 
   function navigateToPage(page: AppPage, options?: { replace?: boolean }): void {
-    activePage = page
+    const nextPage = normaliseVisiblePage(page)
+    activePage = nextPage
 
-    if (page !== 'event-detail') {
+    if (nextPage !== 'event-detail') {
       detailEventId = ''
     }
 
     if (options?.replace) {
-      replaceRouteFromState(page, detailEventId)
+      replaceRouteFromState(nextPage, detailEventId)
       return
     }
 
-    pushRouteFromState(page, detailEventId)
+    pushRouteFromState(nextPage, detailEventId)
   }
 
   function normaliseIntervalEnd(start: number, end: number): number {
@@ -1126,7 +971,7 @@
   }
   $: if (
     hasMountedRouter &&
-    !['home', 'chat-room', 'vertical-timeline'].includes(activePage) &&
+    !['home', 'chat-room'].includes(activePage) &&
     worldviewOptions.length > 0 &&
     routeWorldviewName !== selectedWorldview
   ) {
@@ -1523,10 +1368,6 @@
   }
 
   function handleWindowPointerUp(event: PointerEvent): void {
-    if (chatNavPointerId === event.pointerId) {
-      finishChatNavDrag(event.pointerId)
-    }
-
     if (isDragging) {
       finishTimelineDrag(event.pointerId)
     }
@@ -1540,14 +1381,6 @@
     handleWindowPointerUp(event)
   }
 
-  $: if (activePage === 'chat-room' && !hasInitialisedChatNavPosition) {
-    initialiseChatNavPosition()
-  }
-
-  $: if (activePage !== 'chat-room' && isChatNavMenuOpen) {
-    isChatNavMenuOpen = false
-  }
-
   onMount(() => {
     syncRouteWithLocation(true)
     hasMountedRouter = true
@@ -1558,7 +1391,7 @@
   <title>{projectTitle}</title>
   <meta
     name="description"
-    content="Morosonder：面向 CoC 跑团的世界观、时间轴、角色年龄编年、日志工坊与群聊网站。"
+    content="Morosonder：面向 CoC 跑团的世界观、时间线、年龄工具、日志工坊与群聊网站。"
   />
 </svelte:head>
 
@@ -1567,9 +1400,7 @@
   onkeydown={handleWindowKeydown}
   onpopstate={handleWindowPopState}
   onpointercancel={handleWindowPointerCancel}
-  onpointermove={handleWindowPointerMove}
   onpointerup={handleWindowPointerUp}
-  onresize={handleWindowResize}
 />
 
 <main
@@ -1589,20 +1420,12 @@
           首页
         </button>
         <button
-          class:is-current={activePage === 'timeline'}
-          class="page-switch"
-          type="button"
-          onclick={() => navigateToPage('timeline')}
-        >
-          故事时间轴
-        </button>
-        <button
           class:is-current={activePage === 'vertical-timeline'}
           class="page-switch"
           type="button"
           onclick={() => navigateToPage('vertical-timeline')}
         >
-          垂直时间轴
+          时间线
         </button>
         <button
           class:is-current={activePage === 'age-chronicle'}
@@ -1610,7 +1433,7 @@
           type="button"
           onclick={() => navigateToPage('age-chronicle')}
         >
-          角色年龄编年
+          年龄工具
         </button>
         <button
           class:is-current={activePage === 'log-workbench'}
@@ -1630,7 +1453,7 @@
         {/if}
       </nav>
 
-      {#if !['home', 'chat-room', 'vertical-timeline'].includes(activePage)}
+      {#if !['home', 'chat-room'].includes(activePage)}
         <div bind:this={worldviewMenuElement} class="worldview-dropdown">
         <button
           aria-expanded={isWorldviewMenuOpen}
@@ -2027,7 +1850,14 @@
       {/each}
       </datalist>
     {:else if activePage === 'vertical-timeline'}
-      <VerticalTimelinePage />
+      <VerticalTimelinePage
+        worldviewDescription={activeWorldviewContent.description}
+        worldviewHasCover={currentWorldviewTheme.coverImage !== ''}
+        worldviewName={activeWorldviewName}
+        worldviewTags={activeWorldviewContent.tags}
+        worldviewThemeStyle={themeStyle}
+        worldviewTransitionKey={activeWorldviewName}
+      />
     {:else if activePage === 'age-chronicle'}
       <AgeChroniclePage
         worldviewDescription={activeWorldviewContent.description}
@@ -2048,8 +1878,10 @@
         worldviewThemeStyle={themeStyle}
         worldviewTransitionKey={activeWorldviewName}
       />
+    {:else if activePage === 'admin-character'}
+      <AdminCharacterPage worldviewOptions={worldviewOptions} />
     {:else if activePage === 'chat-room'}
-      <ChatRoomPage />
+      <ChatRoomPage onOpenAdminCharacterPage={() => navigateToPage('admin-character')} />
     {:else}
       <EventDetailPage
         event={timelineEvents.find((event) => event.id === detailEventId) ?? null}
@@ -2132,56 +1964,12 @@
 </main>
 
 {#if activePage === 'chat-room'}
-  <div
-    bind:this={chatNavElement}
-    class="pointer-events-none fixed z-40"
-    style={`left: ${chatNavPositionX}px; top: ${chatNavPositionY}px;`}
+  <button
+    aria-label="返回首页"
+    class="fixed left-4 top-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white/96 shadow-[0_14px_34px_rgba(15,23,42,0.12)] backdrop-blur transition hover:border-slate-300 hover:bg-white md:left-[18px] md:top-[18px]"
+    type="button"
+    onclick={() => navigateToPage('home')}
   >
-    <div class="pointer-events-auto relative flex items-center gap-3">
-      {#if isChatNavMenuOpen}
-        <div
-          id="chat-floating-nav-menu"
-          class={`absolute top-1/2 flex w-44 -translate-y-1/2 flex-col gap-2 rounded-2xl border border-slate-200 bg-white/96 p-2 shadow-[0_18px_40px_rgba(15,23,42,0.12)] backdrop-blur ${
-            chatNavMenuSide === 'left' ? 'right-[calc(100%+0.75rem)]' : 'left-[calc(100%+0.75rem)]'
-          }`}
-          in:fade={{ duration: 120 }}
-          out:fade={{ duration: 100 }}
-        >
-          {#each chatNavPages as item (item.page)}
-            <button
-              aria-current={activePage === item.page ? 'page' : undefined}
-              class={`rounded-xl px-3 py-2 text-left text-sm transition ${
-                activePage === item.page
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-950'
-              }`}
-              type="button"
-              onclick={() => navigateFromChatNav(item.page)}
-            >
-              {item.label}
-            </button>
-          {/each}
-        </div>
-      {/if}
-
-      <button
-        aria-controls="chat-floating-nav-menu"
-        aria-expanded={isChatNavMenuOpen}
-        aria-label="打开页面导航"
-        class="flex h-[58px] w-[58px] items-center justify-center rounded-full border border-slate-200 bg-white/96 text-slate-700 shadow-[0_14px_34px_rgba(15,23,42,0.12)] backdrop-blur transition hover:border-slate-300 hover:text-slate-950"
-        type="button"
-        onclick={toggleChatNavMenu}
-        onpointerdown={handleChatNavPointerDown}
-      >
-        <svg aria-hidden="true" class="h-5 w-5" fill="none" viewBox="0 0 24 24">
-          <path
-            d="M4 7h16M4 12h16M4 17h16"
-            stroke="currentColor"
-            stroke-linecap="round"
-            stroke-width="1.8"
-          ></path>
-        </svg>
-      </button>
-    </div>
-  </div>
+    <img alt="" aria-hidden="true" class="h-5 w-5 object-contain" src="/home.svg" />
+  </button>
 {/if}

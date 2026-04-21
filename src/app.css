@@ -80,7 +80,7 @@ code {
 .shell.is-home {
   width: 100%;
   margin: 0;
-  padding: 0;
+  padding: 36px 0 64px;
 }
 
 .shell.is-chat-room {
@@ -129,12 +129,8 @@ code {
 }
 
 .topbar.is-home {
-  position: fixed;
-  top: 18px;
-  left: 18px;
-  right: 18px;
-  z-index: 30;
-  margin-bottom: 0;
+  width: min(1240px, calc(100% - 32px));
+  margin: 0 auto 18px;
 }
 
 .topbar.is-chat-room {
@@ -4616,8 +4612,17 @@ code {
     padding-bottom: 28px;
   }
 
+  .shell.is-home {
+    padding-top: 18px;
+    padding-bottom: 28px;
+  }
+
   .topbar {
     align-items: stretch;
+  }
+
+  .topbar.is-home {
+    width: min(100%, calc(100% - 20px));
   }
 
   .topbar.is-chat-room {
