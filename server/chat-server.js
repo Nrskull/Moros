@@ -1882,7 +1882,7 @@ function appendCorsHeaders(request, headers = {}) {
     ...headers,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
     'Access-Control-Allow-Origin': allowedOrigin,
     Vary: 'Origin',
   }
