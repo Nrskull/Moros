@@ -1537,6 +1537,7 @@ const statementSelectAllCharacterCardsForAdmin = database.prepare(`
   FROM character_cards
   JOIN character_attributes ON character_attributes.character_id = character_cards.id
   JOIN users ON users.id = character_cards.user_id
+  WHERE character_cards.status != 'archived'
   ORDER BY character_cards.updated_at DESC, character_cards.created_at DESC
 `)
 
@@ -3022,6 +3023,38 @@ function parseVerticalTimelinePointValue(label) {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function compareVerticalTimelineNodesByLabel(left, right) {
+  const pointDifference = parseVerticalTimelinePointValue(left?.label) - parseVerticalTimelinePointValue(right?.label)
+
+  if (pointDifference !== 0) {
+    return pointDifference
+  }
+
+  const labelDifference = String(left?.label ?? '').localeCompare(String(right?.label ?? ''), 'zh-CN', {
+    numeric: true,
+  })
+
+  if (labelDifference !== 0) {
+    return labelDifference
+  }
+
+  return String(left?.id ?? '').localeCompare(String(right?.id ?? ''))
+}
+
+function sortVerticalTimelineYears(years) {
+  return [...years]
+    .map((year) => ({
+      ...year,
+      months: [...year.months]
+        .map((month) => ({
+          ...month,
+          days: [...month.days].sort(compareVerticalTimelineNodesByLabel),
+        }))
+        .sort(compareVerticalTimelineNodesByLabel),
+    }))
+    .sort(compareVerticalTimelineNodesByLabel)
+}
+
 function createVerticalTimelineId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
 }
@@ -3200,7 +3233,7 @@ function sanitiseVerticalTimelineState(input, worldviewName = '') {
       },
     ]
   })
-  const safeYears = syncVerticalTimelineYearsWithLanes(years, lanes)
+  const safeYears = sortVerticalTimelineYears(syncVerticalTimelineYearsWithLanes(years, lanes))
   const nodeIdSet = new Set(flattenVerticalTimelineNodes(safeYears).map((node) => node.id))
   const laneIdSet = new Set(laneIds)
   const seenEventIds = new Set()

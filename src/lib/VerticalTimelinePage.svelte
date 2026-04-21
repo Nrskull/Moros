@@ -621,11 +621,11 @@
     )
 
     if (!nextNodeOptions.some((node) => node.id === selectedNodeId)) {
-      selectedNodeId = nextNodeOptions[0]?.id ?? ''
+      selectedNodeId = ''
     }
 
     if (!nextManageableLanes.some((lane) => lane.id === selectedLaneId)) {
-      selectedLaneId = nextManageableLanes[0]?.id ?? nextState.lanes[0]?.id ?? ''
+      selectedLaneId = ''
     }
 
     if (editingEventId !== '') {
