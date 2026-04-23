@@ -2003,7 +2003,7 @@ code {
 }
 
 .chat-mobile-more-panel {
-  display: grid;
+  display: none;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   height: 100%;
@@ -2379,7 +2379,7 @@ code {
 .chat-composer {
   display: grid;
   gap: 10px;
-  padding: 16px 20px 18px;
+  padding: 16px 20px calc(18px + 1.48em);
   border: none;
   border-top: none;
   border-radius: 0;
@@ -2727,8 +2727,8 @@ code {
 }
 
 .chat-composer-field textarea {
-  height: calc(1.48em + 1.52rem + 2px);
-  min-height: calc(1.48em + 1.52rem + 2px);
+  height: calc(2.96em + 1.52rem + 2px);
+  min-height: calc(2.96em + 1.52rem + 2px);
   max-height: 14rem;
   border-color: transparent;
   border-radius: 16px;
@@ -5089,6 +5089,10 @@ code {
     order: 3;
   }
 
+  .chat-mobile-more-panel {
+    display: grid;
+  }
+
   .chat-message-head {
     display: none !important;
   }
@@ -5105,6 +5109,15 @@ code {
     max-width: 32rem;
     width: min(100%, 32rem);
     padding-inline: 0.2rem;
+  }
+
+  .chat-composer {
+    padding-bottom: 18px;
+  }
+
+  .chat-composer-field textarea {
+    height: calc(1.48em + 1.52rem + 2px);
+    min-height: calc(1.48em + 1.52rem + 2px);
   }
 
   .chat-composer-actions,

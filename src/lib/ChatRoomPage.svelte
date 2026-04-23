@@ -2441,7 +2441,7 @@
             </button>
           {/if}
 
-          <form class="chat-composer !shrink-0 !p-4" onsubmit={handleMessageSubmit}>
+          <form class="chat-composer !shrink-0" onsubmit={handleMessageSubmit}>
             <div class="chat-character-toolbar">
               <div bind:this={characterMenuElement} class="chat-character-menu">
                 <button
