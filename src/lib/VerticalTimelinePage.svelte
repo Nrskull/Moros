@@ -149,6 +149,7 @@
     selectedNodeId !== '' &&
     selectedLaneId !== '' &&
     permissions.manageableLaneIds.includes(selectedLaneId)
+  $: expansionResetKey = `${loadedWorldviewName}:${currentUser?.id ?? 'guest'}`
   $: viewerCapabilityLabel = capabilities.canManageLanes
     ? '管理员权限已启用'
     : currentUser
@@ -1565,6 +1566,7 @@
             canManageStructure={capabilities.canManageStructure}
             editableEventIds={permissions.editableEventIds}
             editableNodeIds={permissions.editableNodeIds}
+            {expansionResetKey}
             {eventsById}
             {lanes}
             manageableLaneIds={permissions.manageableLaneIds}

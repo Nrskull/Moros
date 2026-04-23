@@ -3,8 +3,10 @@
   import {
     createVerticalTimelineLaneStyle,
     type VerticalTimelineBubble,
+    type VerticalTimelineDayNode,
     type VerticalTimelineEventRecord,
     type VerticalTimelineLane,
+    type VerticalTimelineMonthNode,
     type VerticalTimelineNodeKind,
     type VerticalTimelineYearNode,
   } from './vertical-timeline'
@@ -25,18 +27,33 @@
   export let timeAxisLabel = '时间刻度'
   export let canManageLanes = false
   export let canManageStructure = false
+  export let expansionResetKey = ''
 
   let expandedYears = new Set<string>()
   let expandedMonths = new Set<string>()
   let hasInitialisedExpansions = false
+  let lastExpansionResetKey = ''
 
   $: editableEventIdSet = new Set(editableEventIds)
   $: editableNodeIdSet = new Set(editableNodeIds)
   $: manageableLaneIdSet = new Set(manageableLaneIds)
 
-  $: if (!hasInitialisedExpansions && years.length > 0) {
-    expandedYears = new Set(years.map((year) => year.id))
+  $: if (expansionResetKey !== lastExpansionResetKey) {
+    lastExpansionResetKey = expansionResetKey
+    expandedYears = new Set()
     expandedMonths = new Set()
+    hasInitialisedExpansions = false
+  }
+
+  $: if (!hasInitialisedExpansions && years.length > 0) {
+    expandedYears = new Set(years.filter(yearHasVisibleEvent).map((year) => year.id))
+    expandedMonths = new Set(
+      years.flatMap((year) =>
+        year.months
+          .filter(monthHasVisibleEvent)
+          .map((month) => createMonthExpansionKey(year.id, month.id)),
+      ),
+    )
     hasInitialisedExpansions = true
   }
 
@@ -82,6 +99,26 @@
 
   function getBubbleTitle(bubble: VerticalTimelineBubble): string {
     return getEventRecord(bubble.id)?.title ?? bubble.title
+  }
+
+  function nodeHasVisibleEvent(
+    bubblesByLane: Record<string, VerticalTimelineBubble | null>,
+  ): boolean {
+    return lanes.some((lane) => bubblesByLane[lane.id] !== null)
+  }
+
+  function monthHasVisibleEvent(month: VerticalTimelineMonthNode): boolean {
+    return (
+      nodeHasVisibleEvent(month.bubblesByLane) ||
+      month.days.some((day) => nodeHasVisibleEvent(day.bubblesByLane))
+    )
+  }
+
+  function yearHasVisibleEvent(year: VerticalTimelineYearNode): boolean {
+    return (
+      nodeHasVisibleEvent(year.bubblesByLane) ||
+      year.months.some((month) => monthHasVisibleEvent(month))
+    )
   }
 
   function canEditNode(nodeId: string): boolean {
@@ -162,13 +199,11 @@
 
                   {#if canEditNode(year.id)}
                     <button
-                      class={`flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 text-left transition-colors duration-150 ${
-                        selectedNodeId === year.id ? 'bg-slate-900 text-white' : 'hover:bg-white/75'
-                      }`}
+                      class="flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 text-left transition-colors duration-150 hover:bg-white/75"
                       type="button"
                       onclick={() => onSelectNode(year.id, 'year')}
                     >
-                      <span class="truncate font-mono text-lg font-black">{year.label}</span>
+                      <span class="truncate font-mono text-lg font-black text-slate-800">{year.label}</span>
                     </button>
                   {:else}
                     <div class="flex min-w-0 flex-1 items-center px-3 py-2 text-left">
@@ -180,13 +215,11 @@
                 <div class="flex h-full items-center gap-2 pl-8 pr-3 text-left">
                   {#if canEditNode(year.id)}
                     <button
-                      class={`flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 transition-colors duration-150 ${
-                        selectedNodeId === year.id ? 'bg-slate-900 text-white' : 'hover:bg-white/75'
-                      }`}
+                      class="flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 transition-colors duration-150 hover:bg-white/75"
                       type="button"
                       onclick={() => onSelectNode(year.id, 'year')}
                     >
-                      <span class="truncate font-mono text-lg font-black">{year.label}</span>
+                      <span class="truncate font-mono text-lg font-black text-slate-800">{year.label}</span>
                     </button>
                   {:else}
                     <span class="font-mono text-lg font-black text-slate-800">{year.label}</span>
@@ -262,13 +295,11 @@
 
                           {#if canEditNode(month.id)}
                             <button
-                              class={`flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 text-left transition-colors duration-150 ${
-                                selectedNodeId === month.id ? 'bg-slate-900 text-white' : 'hover:bg-white/75'
-                              }`}
+                              class="flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 text-left transition-colors duration-150 hover:bg-white/75"
                               type="button"
                               onclick={() => onSelectNode(month.id, 'month')}
                             >
-                              <span class="truncate font-mono text-sm font-semibold">{month.label}</span>
+                              <span class="truncate font-mono text-sm font-semibold text-slate-500">{month.label}</span>
                             </button>
                           {:else}
                             <span class="font-mono text-sm font-semibold text-slate-500">{month.label}</span>
@@ -278,13 +309,11 @@
                         <div class="flex h-full items-center gap-2 pl-14 pr-3 text-left">
                           {#if canEditNode(month.id)}
                             <button
-                              class={`flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 text-left transition-colors duration-150 ${
-                                selectedNodeId === month.id ? 'bg-slate-900 text-white' : 'hover:bg-white/75'
-                              }`}
+                              class="flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 text-left transition-colors duration-150 hover:bg-white/75"
                               type="button"
                               onclick={() => onSelectNode(month.id, 'month')}
                             >
-                              <span class="truncate font-mono text-sm font-semibold">{month.label}</span>
+                              <span class="truncate font-mono text-sm font-semibold text-slate-500">{month.label}</span>
                             </button>
                           {:else}
                             <span class="font-mono text-sm font-semibold text-slate-500">{month.label}</span>
@@ -343,13 +372,11 @@
                             <div class="flex h-full items-center gap-2 pl-20 pr-3 text-left">
                               {#if canEditNode(day.id)}
                                 <button
-                                  class={`flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 text-left transition-colors duration-150 ${
-                                    selectedNodeId === day.id ? 'bg-slate-900 text-white' : 'hover:bg-white/75'
-                                  }`}
+                                  class="flex min-w-0 flex-1 items-center rounded-2xl px-3 py-2 text-left transition-colors duration-150 hover:bg-white/75"
                                   type="button"
                                   onclick={() => onSelectNode(day.id, 'day')}
                                 >
-                                  <span class="truncate font-mono text-sm font-medium">{day.label}</span>
+                                  <span class="truncate font-mono text-sm font-medium text-gray-400">{day.label}</span>
                                 </button>
                               {:else}
                                 <span class="font-mono text-sm font-medium text-gray-400">{day.label}</span>

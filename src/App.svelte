@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { spring } from 'svelte/motion'
-  import { fade } from 'svelte/transition'
+  import { fade, fly } from 'svelte/transition'
   import {
     worldviewContents,
     getWorldviewContent,
@@ -20,6 +20,12 @@
   import { mockEvents } from './lib/mock-events'
   import { seaFogIn, seaFogOut } from './lib/transitions'
   import { confirmDialog, alertDialog } from './lib/dialog'
+  import {
+    buildChatHttpUrl,
+    CHAT_STORAGE_ROOM_KEY,
+    CHAT_STORAGE_SESSION_KEY,
+    type ChatUser,
+  } from './lib/chat-room'
   import {
     buildAppRouteHref,
     parseAppRoute,
@@ -42,6 +48,7 @@
   type DrawerMode = 'none' | 'event' | 'worldview'
   type EventEditorMode = 'create' | 'edit'
   type EventDragMode = 'move' | 'resize-end'
+  type NavigationItemId = 'age-chronicle' | 'chat-room' | 'home' | 'log-workbench' | 'vertical-timeline'
   type TimelineMode = 'view' | 'edit'
   type TagFilterMode = 'highlight' | 'hide'
 
@@ -65,6 +72,20 @@
 
   interface EditableTimelineEvent extends TimelineEvent {
     trackId: string
+  }
+
+  interface ChatAuthResponse {
+    authenticated?: boolean
+    currentUser?: ChatUser
+    message?: string
+    ok: boolean
+  }
+
+  interface NavigationItem {
+    icon: string
+    id: NavigationItemId
+    label: string
+    page: AppPage
   }
 
   interface RenderedTimelineEvent extends PositionedTimelineEvent {
@@ -98,6 +119,13 @@
   const TRACK_LEADING_GUTTER = 132
   const defaultTrackPalette = ['#d9e0e6', '#c8dce6', '#d5cae6', '#d1e3d3', '#e1d8e6', '#dde3e8']
   const defaultTrackLabels = ['公共线1', '公共线2', '其它线1', 'ho404线']
+  const navigationItems: NavigationItem[] = [
+    { icon: '/home.svg', id: 'home', label: '首页', page: 'home' },
+    { icon: '/timeline.svg', id: 'vertical-timeline', label: '时间线', page: 'vertical-timeline' },
+    { icon: '/plugs.svg', id: 'age-chronicle', label: '年龄工具', page: 'age-chronicle' },
+    { icon: '/log.svg', id: 'log-workbench', label: '日志展示', page: 'log-workbench' },
+    { icon: '/chat.svg', id: 'chat-room', label: '群聊', page: 'chat-room' },
+  ]
   const activeCardBounce = spring(0, { stiffness: 0.22, damping: 0.58 })
   const surfaceNudge = spring(0, { stiffness: 0.16, damping: 0.72 })
 
@@ -260,6 +288,10 @@
   let detailEventId = ''
   let routeWorldviewName: string | null = selectedWorldview || null
   let hasMountedRouter = false
+  let chatAuthUser: ChatUser | null = null
+  let isChatAuthChecking = true
+  let isChatLogoutPending = false
+  let chatLogoutSerial = 0
   let timelineMode: TimelineMode = 'view'
   let tagFilterMode: TagFilterMode = 'highlight'
   let selectedTagFilters: string[] = []
@@ -670,6 +702,111 @@
 
     if (isTagFilterOpen && tagFilterContainerElement && !tagFilterContainerElement.contains(target)) {
       isTagFilterOpen = false
+    }
+  }
+
+  async function requestChatAuth(pathname: string, init?: RequestInit): Promise<ChatAuthResponse> {
+    const headers = new Headers(init?.headers ?? {})
+
+    if (init?.body && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
+
+    const response = await fetch(buildChatHttpUrl(pathname), {
+      ...init,
+      credentials: 'include',
+      headers,
+    })
+
+    let payload: ChatAuthResponse = { ok: response.ok }
+
+    try {
+      payload = (await response.json()) as ChatAuthResponse
+    } catch {
+      payload = {
+        message: '群聊认证服务返回了无法解析的响应。',
+        ok: false,
+      }
+    }
+
+    return {
+      ...payload,
+      ok: response.ok && payload.ok !== false,
+    }
+  }
+
+  async function restoreGlobalChatAuth(): Promise<void> {
+    isChatAuthChecking = true
+
+    try {
+      const payload = await requestChatAuth('/auth/me', { method: 'GET' })
+      chatAuthUser = payload.ok && payload.authenticated === true && payload.currentUser ? payload.currentUser : null
+    } catch {
+      chatAuthUser = null
+    } finally {
+      isChatAuthChecking = false
+    }
+  }
+
+  function clearStoredChatIdentity(): void {
+    localStorage.removeItem(CHAT_STORAGE_SESSION_KEY)
+    localStorage.removeItem(CHAT_STORAGE_ROOM_KEY)
+  }
+
+  function handleChatAuthStateChange(nextUser: ChatUser | null): void {
+    chatAuthUser = nextUser
+    isChatAuthChecking = false
+  }
+
+  function getNavigationActiveId(page: AppPage): NavigationItemId {
+    if (page === 'event-detail') {
+      return 'vertical-timeline'
+    }
+
+    if (page === 'admin-character') {
+      return 'chat-room'
+    }
+
+    if (page === 'timeline') {
+      return 'vertical-timeline'
+    }
+
+    if (
+      page === 'home' ||
+      page === 'vertical-timeline' ||
+      page === 'age-chronicle' ||
+      page === 'log-workbench' ||
+      page === 'chat-room'
+    ) {
+      return page
+    }
+
+    return 'home'
+  }
+
+  async function handleChatLogout(): Promise<void> {
+    if (!chatAuthUser || isChatAuthChecking || isChatLogoutPending) {
+      return
+    }
+
+    isChatLogoutPending = true
+
+    try {
+      const payload = await requestChatAuth('/auth/logout', { method: 'POST' })
+
+      if (!payload.ok) {
+        await alertDialog(payload.message ?? '登出失败，请稍后重试。')
+        return
+      }
+
+      chatAuthUser = null
+      clearStoredChatIdentity()
+      chatLogoutSerial += 1
+      navigateToPage('chat-room')
+    } catch {
+      await alertDialog('登出失败，请确认聊天服务已启动。')
+    } finally {
+      isChatLogoutPending = false
     }
   }
 
@@ -1384,6 +1521,7 @@
   onMount(() => {
     syncRouteWithLocation(true)
     hasMountedRouter = true
+    void restoreGlobalChatAuth()
   })
 </script>
 
@@ -1404,57 +1542,46 @@
 />
 
 <main
-  class={activePage === 'chat-room' ? 'min-w-0 !flex !h-screen !w-full !flex-col !overflow-hidden' : 'shell'}
+  class="shell"
+  class:is-chat-room={activePage === 'chat-room'}
   class:is-home={activePage === 'home'}
   style={themeStyle}
 >
-  {#if activePage !== 'chat-room'}
-    <div class="topbar" class:is-home={activePage === 'home'}>
-      <nav class="page-switcher" aria-label="页面切换">
+  <nav class="side-nav" aria-label="页面切换">
+    <div class="side-nav-group">
+      {#each navigationItems as item (item.id)}
         <button
-          class:is-current={activePage === 'home'}
-          class="page-switch"
+          aria-label={item.label}
+          class:is-current={getNavigationActiveId(activePage) === item.id}
+          class="side-nav-button"
+          data-nav-id={item.id}
+          title={item.label}
           type="button"
-          onclick={() => navigateToPage('home')}
+          onclick={() => navigateToPage(item.page)}
         >
-          首页
+          <img alt="" aria-hidden="true" class={`side-nav-icon side-nav-icon-${item.id}`} src={item.icon} />
         </button>
-        <button
-          class:is-current={activePage === 'vertical-timeline'}
-          class="page-switch"
-          type="button"
-          onclick={() => navigateToPage('vertical-timeline')}
-        >
-          时间线
-        </button>
-        <button
-          class:is-current={activePage === 'age-chronicle'}
-          class="page-switch"
-          type="button"
-          onclick={() => navigateToPage('age-chronicle')}
-        >
-          年龄工具
-        </button>
-        <button
-          class:is-current={activePage === 'log-workbench'}
-          class="page-switch"
-          type="button"
-          onclick={() => navigateToPage('log-workbench')}
-        >
-          日志展示
-        </button>
-        <button class="page-switch" type="button" onclick={() => navigateToPage('chat-room')}>
-          群聊
-        </button>
-        {#if activePage === 'event-detail'}
-          <button class:is-current={true} class="page-switch" type="button">
-            事件详情
-          </button>
-        {/if}
-      </nav>
+      {/each}
+    </div>
 
-      {#if !['home', 'chat-room'].includes(activePage)}
-        <div bind:this={worldviewMenuElement} class="worldview-dropdown">
+    <div class="side-nav-separator" aria-hidden="true"></div>
+
+    <button
+      aria-label="退出群聊登录"
+      class="side-nav-button side-nav-button-logout"
+      data-nav-id="logout"
+      disabled={!chatAuthUser || isChatAuthChecking || isChatLogoutPending}
+      title={chatAuthUser ? '登出' : '当前未登录群聊'}
+      type="button"
+      onclick={handleChatLogout}
+    >
+      <img alt="" aria-hidden="true" class="side-nav-icon side-nav-icon-logout" src="/logout.svg" />
+    </button>
+  </nav>
+
+  {#if !['home', 'chat-room'].includes(activePage)}
+    <div class="app-top-controls">
+      <div bind:this={worldviewMenuElement} class="worldview-dropdown">
         <button
           aria-expanded={isWorldviewMenuOpen}
           class="worldview-dropdown-trigger"
@@ -1490,28 +1617,33 @@
             </button>
           </div>
         {/if}
-        </div>
-      {/if}
+      </div>
     </div>
   {/if}
 
-  <div
-    class={`page-scene-stack min-w-0 ${
-      activePage === 'chat-room' ? '!flex !flex-1 !min-h-0 !items-stretch !overflow-hidden' : ''
-    }`}
-    class:is-home={activePage === 'home'}
-  >
-    {#key activePage}
-      <div
-        class={`page-scene min-w-0 ${
-          activePage === 'chat-room' ? '!flex !h-full !flex-1 !min-h-0 !overflow-hidden' : ''
-        }`}
-        class:is-home={activePage === 'home'}
-        in:fade={{ duration: 150 }}
-        out:fade={{ duration: 150 }}
-      >
-    {#if activePage === 'home'}
-      <HomePage />
+<div
+  class={`page-scene-stack min-w-0 ${activePage === 'chat-room' ? '!h-full !w-full' : ''}`}
+  class:is-chat-room={activePage === 'chat-room'}
+  class:is-home={activePage === 'home'}
+  style="display: grid; grid-template-columns: 100%; grid-template-rows: 100%; flex: 1; min-height: 0;"
+>
+  {#key activePage}
+    {@const isThisPageHome = activePage === 'home'}
+    
+    <div
+      class={`page-scene min-w-0 ${
+        activePage === 'chat-room'
+          ? '!m-0 !flex !h-full !w-full !max-w-none !flex-1 !min-h-0 !overflow-hidden !p-0'
+          : 'overflow-x-hidden'
+      }`}
+      /* 2. 把 is-home 类绑定到快照变量上 */
+      class:is-home={isThisPageHome} 
+      style="grid-area: 1 / 1 / 2 / 2;"
+      in:fly={{ y: 24, duration: 400, delay: 150 }}
+      out:fade={{ duration: 150 }}
+    >
+      {#if activePage === 'home'}
+        <HomePage />
     {:else if activePage === 'timeline'}
       <WorldviewHero
         description={activeWorldviewContent.description}
@@ -1881,7 +2013,11 @@
     {:else if activePage === 'admin-character'}
       <AdminCharacterPage worldviewOptions={worldviewOptions} />
     {:else if activePage === 'chat-room'}
-      <ChatRoomPage onOpenAdminCharacterPage={() => navigateToPage('admin-character')} />
+      <ChatRoomPage
+        authResetKey={chatLogoutSerial}
+        onAuthStateChange={handleChatAuthStateChange}
+        onOpenAdminCharacterPage={() => navigateToPage('admin-character')}
+      />
     {:else}
       <EventDetailPage
         event={timelineEvents.find((event) => event.id === detailEventId) ?? null}
@@ -1962,14 +2098,3 @@
     </div>
   {/if}
 </main>
-
-{#if activePage === 'chat-room'}
-  <button
-    aria-label="返回首页"
-    class="fixed left-4 top-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white/96 shadow-[0_14px_34px_rgba(15,23,42,0.12)] backdrop-blur transition hover:border-slate-300 hover:bg-white md:left-[18px] md:top-[18px]"
-    type="button"
-    onclick={() => navigateToPage('home')}
-  >
-    <img alt="" aria-hidden="true" class="h-5 w-5 object-contain" src="/home.svg" />
-  </button>
-{/if}

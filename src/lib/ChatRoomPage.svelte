@@ -138,6 +138,8 @@
     retryAfterMs?: number
   }
 
+  export let authResetKey = 0
+  export let onAuthStateChange: ((currentUser: ChatUser | null) => void) | undefined = undefined
   export let onOpenAdminCharacterPage: (() => void) | undefined = undefined
 
   const ROOM_PLACEHOLDER: ChatRoom = {
@@ -253,6 +255,7 @@
   let messageLongPressTimer: number | null = null
   let messageLongPressStartX = 0
   let messageLongPressStartY = 0
+  let handledAuthResetKey = authResetKey
 
   $: avatarCropViewportSize =
     avatarCropSurfaceWidth > 0 ? avatarCropSurfaceWidth : AVATAR_CROP_VIEWPORT_SIZE
@@ -272,6 +275,11 @@
     avatarCropPreviewTransform = `translate(calc(-50% + ${avatarCropOffsetX}px), calc(-50% + ${avatarCropOffsetY}px))`
   }
 
+  $: if (authResetKey !== handledAuthResetKey) {
+    handledAuthResetKey = authResetKey
+    resetChatStateAfterExternalLogout()
+  }
+
   function sanitiseNickname(value: string): string {
     return value.replace(/\s+/g, ' ').trim().slice(0, 24)
   }
@@ -279,6 +287,11 @@
   function resolveChatNicknameFromUser(user: ChatUser | null): string {
     const preferredName = user?.displayName?.trim() || user?.handle?.trim() || ''
     return sanitiseNickname(preferredName)
+  }
+
+  function setCurrentUser(nextUser: ChatUser | null): void {
+    currentUser = nextUser
+    onAuthStateChange?.(nextUser)
   }
 
   function sanitiseRoomName(value: string): string {
@@ -1121,7 +1134,7 @@
     characterCards: ChatCharacterCard[]
     currentUser: ChatUser
   }): void {
-    currentUser = payload.currentUser
+    setCurrentUser(payload.currentUser)
     characterCards = payload.characterCards
     activeCharacterId = payload.activeCharacterId
   }
@@ -1329,18 +1342,18 @@
       const payload = await requestAuth('/auth/me', { method: 'GET' })
 
       if (!payload.ok || payload.authenticated !== true || !payload.currentUser) {
-        currentUser = null
+        setCurrentUser(null)
         manageableUsers = []
         roomPermissions = []
         return false
       }
 
-      currentUser = payload.currentUser
+      setCurrentUser(payload.currentUser)
       authError = ''
       return true
     } catch {
       authError = '身份校验失败，请确认聊天服务已启动。'
-      currentUser = null
+      setCurrentUser(null)
       manageableUsers = []
       roomPermissions = []
       return false
@@ -1374,7 +1387,7 @@
         return
       }
 
-      currentUser = payload.currentUser
+      setCurrentUser(payload.currentUser)
       nickname = resolveChatNicknameFromUser(payload.currentUser)
       manageableUsers = []
       roomPermissions = []
@@ -1396,13 +1409,6 @@
     }
   }
 
-  function openAuthPrompt(): void {
-    closeMobileDrawers()
-    accessKeyDraft = ''
-    authError = ''
-    isAuthPromptOpen = true
-  }
-
   function scheduleReconnect(): void {
     clearReconnectTimer()
     connectionState = 'reconnecting'
@@ -1418,10 +1424,45 @@
     currentSocket?.close()
   }
 
+  function resetChatStateAfterExternalLogout(): void {
+    shouldReconnect = false
+    clearReconnectTimer()
+    closeSocket()
+    localStorage.removeItem(CHAT_STORAGE_SESSION_KEY)
+    localStorage.removeItem(CHAT_STORAGE_ROOM_KEY)
+
+    room = ROOM_PLACEHOLDER
+    rooms = [ROOM_PLACEHOLDER]
+    activeRoomId = PUBLIC_CHAT_ROOM_ID
+    sessionId = ''
+    nickname = ''
+    accessKeyDraft = ''
+    authError = ''
+    connectionError = ''
+    connectionState = 'disconnected'
+    setCurrentUser(null)
+    characterCards = []
+    activeCharacterId = null
+    messages = []
+    members = []
+    manageableUsers = []
+    roomPermissions = []
+    replyTarget = null
+    unreadIncomingCount = 0
+    isCharacterMenuOpen = false
+    closeMessageActionMenu()
+    closeMobileDrawers()
+    closeRoomPermissionsPrompt()
+    isCreateRoomPromptOpen = false
+    isCreateCharacterPromptOpen = false
+    isEditCharacterPromptOpen = false
+    isAuthPromptOpen = true
+  }
+
   async function handleServerPayload(payload: ChatServerPayload): Promise<void> {
     if (payload.type === 'auth_required') {
       shouldReconnect = false
-      currentUser = null
+      setCurrentUser(null)
       nickname = ''
       manageableUsers = []
       roomPermissions = []
@@ -1996,12 +2037,14 @@
     isLeftDrawerOpen = false
     isRightDrawerOpen = false
   }
+
+  function handleCharacterSettingsPlaceholderClick(): void {}
 </script>
 
 <svelte:window onclick={handleWindowClick} />
 
 <section class="chat-page !flex !h-full !w-full !min-h-0 !flex-1 !overflow-hidden">
-  <section class="board chat-board !m-0 !flex !h-full !w-full !min-h-0 !flex-1 !flex-col !overflow-hidden">
+  <section class="board chat-board !m-0 !flex !h-full !min-h-0 !flex-col !overflow-hidden">
     <div class="flex h-14 shrink-0 items-center justify-between md:hidden">
       <button aria-label="打开房间列表" class="toolbar-action flex-shrink-0" type="button" onclick={toggleLeftDrawer}>
         房间
@@ -2097,7 +2140,7 @@
         </div>
       </aside>
 
-      <section class="chat-panel chat-message-panel !flex !h-full !min-h-0 !flex-1 !flex-col !overflow-hidden border-x border-gray-200">
+      <section class="chat-panel chat-message-panel !flex !h-full !min-h-0 !flex-1 !flex-col !overflow-hidden">
         {#if isCreateCharacterPromptOpen || isEditCharacterPromptOpen}
           {@const activeCharacterDraft = getActiveCharacterAttributesDraft()}
           <div class="chat-character-sheet-page !flex-1">
@@ -2333,66 +2376,86 @@
           {/if}
 
           <form class="chat-composer !shrink-0 !p-4" onsubmit={handleMessageSubmit}>
-            <div bind:this={characterMenuElement} class="chat-character-menu">
-              <button
-                aria-expanded={isCharacterMenuOpen}
-                class="chat-character-trigger"
-                disabled={connectionState !== 'connected'}
-                type="button"
-                onclick={toggleCharacterMenu}
-              >
-                <span>
-                  {activeCharacter
-                    ? `当前角色：${activeCharacter.name}${isKpNarrationCharacter(activeCharacter) ? ' · KP旁白' : ''}`
-                    : '当前角色：未设置'}
-                </span>
-                <span aria-hidden="true">{isCharacterMenuOpen ? '▴' : '▾'}</span>
-              </button>
+            <div class="chat-character-toolbar">
+              <div bind:this={characterMenuElement} class="chat-character-menu">
+                <button
+                  aria-expanded={isCharacterMenuOpen}
+                  class="chat-character-trigger"
+                  disabled={connectionState !== 'connected'}
+                  type="button"
+                  onclick={toggleCharacterMenu}
+                >
+                  <span>
+                    {activeCharacter
+                      ? `当前角色：${activeCharacter.name}${isKpNarrationCharacter(activeCharacter) ? ' · KP旁白' : ''}`
+                      : '当前角色：未设置'}
+                  </span>
+                  <span aria-hidden="true">{isCharacterMenuOpen ? '▴' : '▾'}</span>
+                </button>
 
-              {#if isCharacterMenuOpen}
-                <div class="chat-character-dropdown">
-                  {#if characterCards.length === 0}
-                    <div class="chat-character-empty">当前还没有角色卡。</div>
-                  {:else}
-                    {#each characterCards as character (character.id)}
-                      <div class="chat-character-option">
-                        <button
-                          class:is-active={character.id === activeCharacterId}
-                          class="chat-character-option-main"
-                          type="button"
-                          onclick={() => switchActiveCharacter(character.id)}
-                        >
-                          <strong>{character.name}</strong>
-                          <span>
-                            {character.id === activeCharacterId
-                              ? isKpNarrationCharacter(character)
-                                ? '当前使用 / KP旁白模式'
-                                : '当前使用'
-                              : isKpNarrationCharacter(character)
-                                ? '切换到 KP 旁白模式'
-                                : '切换到该角色'}
-                          </span>
-                        </button>
+                {#if isCharacterMenuOpen}
+                  <div class="chat-character-dropdown">
+                    {#if characterCards.length === 0}
+                      <div class="chat-character-empty">当前还没有角色卡。</div>
+                    {:else}
+                      {#each characterCards as character (character.id)}
+                        <div class="chat-character-option">
+                          <button
+                            class:is-active={character.id === activeCharacterId}
+                            class="chat-character-option-main"
+                            type="button"
+                            onclick={() => switchActiveCharacter(character.id)}
+                          >
+                            <strong>{character.name}</strong>
+                            <span>
+                              {character.id === activeCharacterId
+                                ? isKpNarrationCharacter(character)
+                                  ? '当前使用 / KP旁白模式'
+                                  : '当前使用'
+                                : isKpNarrationCharacter(character)
+                                  ? '切换到 KP 旁白模式'
+                                  : '切换到该角色'}
+                            </span>
+                          </button>
 
-                        <button
-                          aria-label={`编辑角色 ${character.name}`}
-                          class="chat-character-option-edit"
-                          type="button"
-                          onclick={() => openEditCharacterPrompt(character)}
-                        >
-                          ⚙
-                        </button>
-                      </div>
-                    {/each}
-                  {/if}
+                          <button
+                            aria-label={`编辑角色 ${character.name}`}
+                            class="chat-character-option-edit"
+                            type="button"
+                            onclick={() => openEditCharacterPrompt(character)}
+                          >
+                            ⚙
+                          </button>
+                        </div>
+                      {/each}
+                    {/if}
 
-                  <div class="chat-character-dropdown-footer">
-                    <button class="chat-character-create" type="button" onclick={openCreateCharacterPrompt}>
-                      + 新建角色卡
-                    </button>
+                    <div class="chat-character-dropdown-footer">
+                      <button class="chat-character-create" type="button" onclick={openCreateCharacterPrompt}>
+                        + 新建角色卡
+                      </button>
+                    </div>
                   </div>
-                </div>
-              {/if}
+                {/if}
+              </div>
+
+              <button
+                aria-label="角色设置"
+                class="toolbar-action chat-character-settings-trigger"
+                type="button"
+                onclick={handleCharacterSettingsPlaceholderClick}
+              >
+                <svg aria-hidden="true" fill="none" viewBox="0 0 20 20">
+                  <path
+                    d="M8.74 2.72a1.5 1.5 0 0 1 2.52 0l.41.68a1.5 1.5 0 0 0 1.56.68l.77-.18a1.5 1.5 0 0 1 1.78 1.78l-.18.77a1.5 1.5 0 0 0 .68 1.56l.68.41a1.5 1.5 0 0 1 0 2.52l-.68.41a1.5 1.5 0 0 0-.68 1.56l.18.77a1.5 1.5 0 0 1-1.78 1.78l-.77-.18a1.5 1.5 0 0 0-1.56.68l-.41.68a1.5 1.5 0 0 1-2.52 0l-.41-.68a1.5 1.5 0 0 0-1.56-.68l-.77.18a1.5 1.5 0 0 1-1.78-1.78l.18-.77a1.5 1.5 0 0 0-.68-1.56l-.68-.41a1.5 1.5 0 0 1 0-2.52l.68-.41a1.5 1.5 0 0 0 .68-1.56l-.18-.77A1.5 1.5 0 0 1 6 3.9l.77.18a1.5 1.5 0 0 0 1.56-.68l.41-.68Z"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="1.4"
+                  />
+                  <circle cx="10" cy="10" r="2.6" stroke="currentColor" stroke-width="1.4" />
+                </svg>
+              </button>
             </div>
 
             {#if replyTarget}
@@ -2477,16 +2540,6 @@
     {#if connectionError !== ''}
       <div class="chat-error-banner pointer-events-auto max-w-sm">{connectionError}</div>
     {/if}
-
-    <div class="pointer-events-auto rounded-xl border border-slate-200 bg-white/94 p-1.5 shadow-[0_14px_28px_rgba(15,23,42,0.1)] backdrop-blur">
-      <button
-        class="inline-flex min-h-8 items-center justify-center rounded-lg bg-slate-900 px-3 py-1.5 text-[0.75rem] font-medium text-white transition hover:bg-slate-700"
-        type="button"
-        onclick={openAuthPrompt}
-      >
-        {currentUser ? '更换密钥' : '输入密钥'}
-      </button>
-    </div>
   </div>
 
   {#if isAuthPromptOpen}
