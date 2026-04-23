@@ -737,6 +737,10 @@
     return isMessageRevoked(message) ? '该消息已撤回' : message.body
   }
 
+  function getMessageBodyLines(body: string): string[] {
+    return body.split(/\r?\n/)
+  }
+
   function getMessageReplySpeakerName(message: ChatMessage): string {
     return message.replyToSpeakerName?.trim() || '引用消息'
   }
@@ -2367,7 +2371,11 @@
                     </div>
                   {:else if item.type === 'narration'}
                     <div class:has-ruling-tone={item.isRulingTone} class="chat-message-narration">
-                      <p use:autoIndentMessage class="chat-message-text">{item.body}</p>
+                      <p use:autoIndentMessage class="chat-message-text">
+                        {#each getMessageBodyLines(item.body) as line}
+                          <span class="chat-message-line">{line === '' ? '\u00A0' : line}</span>
+                        {/each}
+                      </p>
                     </div>
                   {:else}
                     <article class:is-own={item.isOwn} class="chat-message-group">
@@ -2411,7 +2419,11 @@
                               {#if message.kind === 'dice'}
                                 <span class="chat-message-kind">检定结果</span>
                               {/if}
-                              <p use:autoIndentMessage class="chat-message-text">{getMessageBubbleBody(message)}</p>
+                              <p use:autoIndentMessage class="chat-message-text">
+                                {#each getMessageBodyLines(getMessageBubbleBody(message)) as line}
+                                  <span class="chat-message-line">{line === '' ? '\u00A0' : line}</span>
+                                {/each}
+                              </p>
                             </button>
                           {/each}
                         </div>
@@ -2532,14 +2544,10 @@
                 rows="1"
                 value={draftMessage}
               ></textarea>
-            </label>
-
-            <div class="chat-composer-actions">
-              <span>{draftMessage.trim().length}/{CHAT_MAX_MESSAGE_LENGTH}</span>
-              <button class="toolbar-action toolbar-primary" disabled={!canSend} type="submit">
+              <button class="chat-send-button" disabled={!canSend} type="submit">
                 发送
               </button>
-            </div>
+            </label>
           </form>
         {/if}
       </section>
