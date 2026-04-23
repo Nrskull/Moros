@@ -88,6 +88,15 @@
     page: AppPage
   }
 
+  interface ChatMobileMenuItem {
+    action: () => Promise<void> | void
+    current?: boolean
+    disabled?: boolean
+    icon: string
+    id: string
+    label: string
+  }
+
   interface RenderedTimelineEvent extends PositionedTimelineEvent {
     active: boolean
     bounceScale: number
@@ -274,6 +283,7 @@
 
   let timelineScrollElement: HTMLDivElement | null = null
   let timelineSurfaceElement: HTMLDivElement | null = null
+  let mobileMoreNavElement: HTMLDivElement | null = null
   let worldviewMenuElement: HTMLDivElement | null = null
   let tagFilterContainerElement: HTMLDivElement | null = null
 
@@ -281,6 +291,7 @@
   let timelineEvents: EditableTimelineEvent[] = initialTimelineState.events
   let customWorldviews: WorldviewContent[] = []
   let selectedWorldview = timelineEvents[0]?.worldview ?? ''
+  let isMobileMoreNavOpen = false
   let isWorldviewMenuOpen = false
   let isTagFilterOpen = false
   let zoomLevel = 1
@@ -292,6 +303,7 @@
   let isChatAuthChecking = true
   let isChatLogoutPending = false
   let chatLogoutSerial = 0
+  let chatMobileMenuItems: ChatMobileMenuItem[] = []
   let timelineMode: TimelineMode = 'view'
   let tagFilterMode: TagFilterMode = 'highlight'
   let selectedTagFilters: string[] = []
@@ -703,6 +715,10 @@
     if (isTagFilterOpen && tagFilterContainerElement && !tagFilterContainerElement.contains(target)) {
       isTagFilterOpen = false
     }
+
+    if (isMobileMoreNavOpen && mobileMoreNavElement && !mobileMoreNavElement.contains(target)) {
+      isMobileMoreNavOpen = false
+    }
   }
 
   async function requestChatAuth(pathname: string, init?: RequestInit): Promise<ChatAuthResponse> {
@@ -753,6 +769,11 @@
     localStorage.removeItem(CHAT_STORAGE_ROOM_KEY)
   }
 
+  function toggleMobileMoreNav(): void {
+    isMobileMoreNavOpen = !isMobileMoreNavOpen
+    isWorldviewMenuOpen = false
+  }
+
   function handleChatAuthStateChange(nextUser: ChatUser | null): void {
     chatAuthUser = nextUser
     isChatAuthChecking = false
@@ -789,6 +810,7 @@
       return
     }
 
+    isMobileMoreNavOpen = false
     isChatLogoutPending = true
 
     try {
@@ -924,6 +946,8 @@
   function navigateToPage(page: AppPage, options?: { replace?: boolean }): void {
     const nextPage = normaliseVisiblePage(page)
     activePage = nextPage
+    isMobileMoreNavOpen = false
+    isWorldviewMenuOpen = false
 
     if (nextPage !== 'event-detail') {
       detailEventId = ''
@@ -1059,6 +1083,22 @@
   $: activeWorldviewContent = resolveWorldviewContent(activeWorldviewName)
   $: currentWorldviewTheme = resolveWorldviewTheme(activeWorldviewName)
   $: themeStyle = createWorldviewThemeStyle(currentWorldviewTheme)
+  $: chatMobileMenuItems = [
+    ...navigationItems.map((item) => ({
+      action: () => navigateToPage(item.page),
+      current: getNavigationActiveId(activePage) === item.id,
+      icon: item.icon,
+      id: item.id,
+      label: item.label,
+    })),
+    {
+      action: handleChatLogout,
+      disabled: !chatAuthUser || isChatAuthChecking || isChatLogoutPending,
+      icon: '/logout.svg',
+      id: 'logout',
+      label: chatAuthUser ? '登出' : '未登录群聊',
+    },
+  ]
   $: logWorldviewCards = worldviewOptions.map((worldview) => {
     const worldviewContent = resolveWorldviewContent(worldview)
     const worldviewTheme = resolveWorldviewTheme(worldview)
@@ -1198,6 +1238,7 @@
     selectedWorldview = worldview
     routeWorldviewName = worldview
     isWorldviewMenuOpen = false
+    isMobileMoreNavOpen = false
     isTagFilterOpen = false
     activeEventId = ''
     hoveredEventId = ''
@@ -1566,6 +1607,79 @@
 
     <div class="side-nav-separator" aria-hidden="true"></div>
 
+    <div bind:this={mobileMoreNavElement} class="mobile-more-nav">
+      <button
+        aria-expanded={isMobileMoreNavOpen}
+        aria-label="更多"
+        class="side-nav-button side-nav-button-more"
+        data-nav-id="more"
+        title="更多"
+        type="button"
+        onclick={toggleMobileMoreNav}
+      >
+        <img alt="" aria-hidden="true" class="side-nav-icon side-nav-icon-more" src="/more.svg" />
+      </button>
+
+      {#if isMobileMoreNavOpen}
+        <div class="mobile-more-menu">
+          <button
+            class="mobile-more-item"
+            disabled={!chatAuthUser || isChatAuthChecking || isChatLogoutPending}
+            type="button"
+            onclick={handleChatLogout}
+          >
+            <img alt="" aria-hidden="true" src="/logout.svg" />
+            <span>{chatAuthUser ? '登出' : '未登录群聊'}</span>
+          </button>
+        </div>
+      {/if}
+    </div>
+
+    <div class="side-nav-separator" aria-hidden="true"></div>
+
+    <div bind:this={worldviewMenuElement} class="side-nav-worldview worldview-dropdown">
+      <button
+        aria-expanded={isWorldviewMenuOpen}
+        aria-label="切换世界观"
+        class="side-nav-button side-nav-button-worldview"
+        data-nav-id="worldview"
+        disabled={['home', 'chat-room'].includes(activePage)}
+        title={['home', 'chat-room'].includes(activePage) ? '当前页面不需要切换世界观' : '切换世界观'}
+        type="button"
+        onclick={toggleWorldviewMenu}
+      >
+        <img alt="" aria-hidden="true" class="side-nav-icon side-nav-icon-worldview" src="/switch.svg" />
+      </button>
+
+      {#if isWorldviewMenuOpen && !['home', 'chat-room'].includes(activePage)}
+        <div
+          class="worldview-dropdown-menu side-nav-worldview-menu"
+          in:seaFogIn={{ delay: 0, duration: 220 }}
+          out:seaFogOut={{ duration: 180 }}
+        >
+          {#each worldviewOptions as worldview}
+            {@const worldviewContent = resolveWorldviewContent(worldview)}
+            <button
+              class:is-current={selectedWorldview === worldview}
+              class="worldview-dropdown-item"
+              type="button"
+              onclick={() => changeWorldview(worldview)}
+            >
+              <strong>{worldview}</strong>
+              <span>{worldviewContent.description}</span>
+            </button>
+          {/each}
+
+          <div class="worldview-dropdown-divider" aria-hidden="true"></div>
+          <button class="worldview-dropdown-create" type="button" onclick={openCreateWorldview}>
+            + 新增世界观
+          </button>
+        </div>
+      {/if}
+    </div>
+
+    <div class="side-nav-separator" aria-hidden="true"></div>
+
     <button
       aria-label="退出群聊登录"
       class="side-nav-button side-nav-button-logout"
@@ -1578,48 +1692,6 @@
       <img alt="" aria-hidden="true" class="side-nav-icon side-nav-icon-logout" src="/logout.svg" />
     </button>
   </nav>
-
-  {#if !['home', 'chat-room'].includes(activePage)}
-    <div class="app-top-controls">
-      <div bind:this={worldviewMenuElement} class="worldview-dropdown">
-        <button
-          aria-expanded={isWorldviewMenuOpen}
-          class="worldview-dropdown-trigger"
-          type="button"
-          onclick={toggleWorldviewMenu}
-        >
-          <span class="worldview-dropdown-label">世界观</span>
-          <strong>{activeWorldviewName}</strong>
-        </button>
-
-        {#if isWorldviewMenuOpen}
-          <div
-            class="worldview-dropdown-menu"
-            in:seaFogIn={{ delay: 0, duration: 220 }}
-            out:seaFogOut={{ duration: 180 }}
-          >
-            {#each worldviewOptions as worldview}
-              {@const worldviewContent = resolveWorldviewContent(worldview)}
-              <button
-                class:is-current={selectedWorldview === worldview}
-                class="worldview-dropdown-item"
-                type="button"
-                onclick={() => changeWorldview(worldview)}
-              >
-                <strong>{worldview}</strong>
-                <span>{worldviewContent.description}</span>
-              </button>
-            {/each}
-
-            <div class="worldview-dropdown-divider" aria-hidden="true"></div>
-            <button class="worldview-dropdown-create" type="button" onclick={openCreateWorldview}>
-              + 新增世界观
-            </button>
-          </div>
-        {/if}
-      </div>
-    </div>
-  {/if}
 
 <div
   class={`page-scene-stack min-w-0 ${activePage === 'chat-room' ? '!h-full !w-full' : ''}`}
@@ -2015,6 +2087,7 @@
     {:else if activePage === 'chat-room'}
       <ChatRoomPage
         authResetKey={chatLogoutSerial}
+        mobileMenuItems={chatMobileMenuItems}
         onAuthStateChange={handleChatAuthStateChange}
         onOpenAdminCharacterPage={() => navigateToPage('admin-character')}
       />

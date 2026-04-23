@@ -138,7 +138,17 @@
     retryAfterMs?: number
   }
 
+  interface ChatMobileMenuItem {
+    action: () => Promise<void> | void
+    current?: boolean
+    disabled?: boolean
+    icon: string
+    id: string
+    label: string
+  }
+
   export let authResetKey = 0
+  export let mobileMenuItems: ChatMobileMenuItem[] = []
   export let onAuthStateChange: ((currentUser: ChatUser | null) => void) | undefined = undefined
   export let onOpenAdminCharacterPage: (() => void) | undefined = undefined
 
@@ -1783,6 +1793,34 @@
     void sendMessage()
   }
 
+  function resizeComposerTextarea(): void {
+    if (!composerTextareaElement) {
+      return
+    }
+
+    composerTextareaElement.style.height = 'auto'
+    const computedStyle = getComputedStyle(composerTextareaElement)
+    const maxHeight = Number.parseFloat(computedStyle.maxHeight)
+    const nextHeight = Number.isFinite(maxHeight)
+      ? Math.min(composerTextareaElement.scrollHeight, maxHeight)
+      : composerTextareaElement.scrollHeight
+
+    composerTextareaElement.style.height = `${nextHeight}px`
+    composerTextareaElement.style.overflowY =
+      Number.isFinite(maxHeight) && composerTextareaElement.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }
+
+  function handleComposerInput(event: Event): void {
+    const target = event.currentTarget
+
+    if (!(target instanceof HTMLTextAreaElement)) {
+      return
+    }
+
+    draftMessage = target.value
+    resizeComposerTextarea()
+  }
+
   function handleMessageSubmit(event: SubmitEvent): void {
     event.preventDefault()
     void sendMessage()
@@ -1836,6 +1874,8 @@
     draftMessage = ''
     clearReplyTarget()
     connectionError = ''
+    await tick()
+    resizeComposerTextarea()
     await scrollMessagesToBottom()
   }
 
@@ -2033,6 +2073,15 @@
     }
   }
 
+  function handleMobileMenuItemClick(item: ChatMobileMenuItem): void {
+    if (item.disabled) {
+      return
+    }
+
+    closeMobileDrawers()
+    void item.action()
+  }
+
   function closeMobileDrawers(): void {
     isLeftDrawerOpen = false
     isRightDrawerOpen = false
@@ -2045,29 +2094,34 @@
 
 <section class="chat-page !flex !h-full !w-full !min-h-0 !flex-1 !overflow-hidden">
   <section class="board chat-board !m-0 !flex !h-full !min-h-0 !flex-col !overflow-hidden">
-    <div class="flex h-14 shrink-0 items-center justify-between md:hidden">
+    <div class="flex h-14 shrink-0 items-center gap-3 md:hidden">
       <button aria-label="打开房间列表" class="toolbar-action flex-shrink-0" type="button" onclick={toggleLeftDrawer}>
         房间
       </button>
       <strong class="min-w-0 flex-1 truncate text-center">{room.name}</strong>
-      <button aria-label="打开在线成员列表" class="toolbar-action flex-shrink-0" type="button" onclick={toggleRightDrawer}>
-        成员
+      <button
+        aria-label="打开群聊更多"
+        class="toolbar-action chat-mobile-more-trigger flex-shrink-0"
+        type="button"
+        onclick={toggleRightDrawer}
+      >
+        <img alt="" aria-hidden="true" src="/chat_more.svg" />
       </button>
     </div>
 
-    {#if isLeftDrawerOpen || isRightDrawerOpen}
-      <button
-        aria-label="关闭侧边栏"
-        class="fixed inset-0 z-[45] md:hidden"
-        style="background: rgba(15, 23, 42, 0.34);"
-        type="button"
-        onclick={closeMobileDrawers}
-      ></button>
-    {/if}
-
     <div class="chat-layout !flex !min-h-0 !flex-1 !overflow-hidden">
+      {#if isLeftDrawerOpen || isRightDrawerOpen}
+        <button
+          aria-label="关闭侧边栏"
+          class="fixed inset-0 z-40 md:hidden"
+          style="background: rgba(15, 23, 42, 0.34);"
+          type="button"
+          onclick={closeMobileDrawers}
+        ></button>
+      {/if}
+
       <aside
-        class={`chat-panel chat-room-panel fixed inset-y-0 left-0 z-50 !flex !flex-col !overflow-hidden transition-transform duration-300 ${
+        class={`chat-panel chat-room-panel fixed inset-y-0 left-0 z-[70] !flex !flex-col !overflow-hidden transition-transform duration-300 ${
           isLeftDrawerOpen ? 'translate-x-0' : '-translate-x-full'
         } w-[80vw] max-w-80 md:relative md:inset-auto md:z-auto md:!h-full md:!w-72 md:!shrink-0 md:!translate-x-0`}
       >
@@ -2471,11 +2525,12 @@
             <label class="chat-composer-field">
               <textarea
                 bind:this={composerTextareaElement}
-                bind:value={draftMessage}
                 maxlength={CHAT_MAX_MESSAGE_LENGTH}
+                oninput={handleComposerInput}
                 onkeydown={handleComposerKeydown}
                 placeholder="Shift + Enter 换行"
-                rows="3"
+                rows="1"
+                value={draftMessage}
               ></textarea>
             </label>
 
@@ -2490,29 +2545,55 @@
       </section>
 
       <aside
-        class={`chat-panel chat-member-panel fixed inset-y-0 right-0 z-50 !flex !flex-col !overflow-hidden transition-transform duration-300 ${
+        class={`chat-panel chat-member-panel fixed inset-y-0 right-0 z-[70] !flex !flex-col !overflow-hidden transition-transform duration-300 ${
           isRightDrawerOpen ? 'translate-x-0' : 'translate-x-full'
         } w-[80vw] max-w-72 md:relative md:inset-auto md:z-auto md:!h-full md:!w-60 md:!shrink-0 md:!translate-x-0`}
       >
-        <div class="chat-panel-head">
-          <div>
-            <span class="section-label">在线成员</span>
-            <strong>当前在线</strong>
+        <div class="chat-mobile-more-panel md:hidden">
+          <div class="chat-panel-head">
+            <div>
+              <span class="section-label">群聊</span>
+              <strong>更多功能</strong>
+            </div>
           </div>
-          <span>{members.length} 人</span>
+
+          <div class="chat-mobile-menu-list">
+            {#each mobileMenuItems as item (item.id)}
+              <button
+                class:is-current={item.current}
+                class="chat-mobile-menu-item"
+                disabled={item.disabled}
+                type="button"
+                onclick={() => handleMobileMenuItemClick(item)}
+              >
+                <img alt="" aria-hidden="true" src={item.icon} />
+                <span>{item.label}</span>
+              </button>
+            {/each}
+          </div>
         </div>
 
-        <div class="chat-member-list !flex-1">
-          {#if members.length === 0}
-            <div class="chat-empty-inline">当前还没有在线成员。</div>
-          {:else}
-            {#each members as member (member.sessionId)}
-              <div class="chat-member-item">
-                <strong>{member.nickname}</strong>
-                <span>{member.sessionId === sessionId ? '你' : '在线中'}</span>
-              </div>
-            {/each}
-          {/if}
+        <div class="hidden min-h-0 flex-1 flex-col md:flex">
+          <div class="chat-panel-head">
+            <div>
+              <span class="section-label">在线成员</span>
+              <strong>当前在线</strong>
+            </div>
+            <span>{members.length} 人</span>
+          </div>
+
+          <div class="chat-member-list !flex-1">
+            {#if members.length === 0}
+              <div class="chat-empty-inline">当前还没有在线成员。</div>
+            {:else}
+              {#each members as member (member.sessionId)}
+                <div class="chat-member-item">
+                  <strong>{member.nickname}</strong>
+                  <span>{member.sessionId === sessionId ? '你' : '在线中'}</span>
+                </div>
+              {/each}
+            {/if}
+          </div>
         </div>
       </aside>
     </div>
