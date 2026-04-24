@@ -53,6 +53,7 @@
   type EventDragMode = 'move' | 'resize-end'
   type NavigationItemId = 'chat-room' | 'home' | 'log-workbench' | 'tools-overview' | 'vertical-timeline'
   type TimelineMode = 'view' | 'edit'
+  type ThemeMode = 'light' | 'dark'
   type TagFilterMode = 'highlight' | 'hide'
 
   interface ZoomDensity {
@@ -142,6 +143,13 @@
   const SNAP_DELAY = 120
   const EVENT_DRAG_THRESHOLD = 10
   const DEFAULT_WORLDVIEW_NAME = '未分类世界观'
+  const THEME_MODE_STORAGE_KEY = 'morosonder-theme-mode'
+  const DARK_WORLDVIEW_THEME_STYLE = [
+    '--theme-surface-start:#101824',
+    '--theme-surface-end:#0c111a',
+    '--theme-glow:rgba(83, 111, 145, 0.24)',
+    '--theme-glow-soft:rgba(31, 42, 58, 0.32)',
+  ].join('; ')
   const FIXED_LAYOUT_SURFACE_PADDING = 64
   const TRACK_LEADING_GUTTER = 132
   const defaultTrackPalette = ['#d9e0e6', '#c8dce6', '#d5cae6', '#d1e3d3', '#e1d8e6', '#dde3e8']
@@ -325,6 +333,7 @@
   let chatLogoutSerial = 0
   let chatMobileMenuItems: ChatMobileMenuItem[] = []
   let timelineMode: TimelineMode = 'view'
+  let themeMode: ThemeMode = 'light'
   let tagFilterMode: TagFilterMode = 'highlight'
   let selectedTagFilters: string[] = []
   let activeEventId = ''
@@ -873,6 +882,42 @@
     isWorldviewMenuOpen = false
   }
 
+  function isThemeMode(value: string | null): value is ThemeMode {
+    return value === 'light' || value === 'dark'
+  }
+
+  function syncDocumentThemeMode(mode: ThemeMode): void {
+    if (typeof document === 'undefined') {
+      return
+    }
+
+    document.documentElement.dataset.theme = mode
+  }
+
+  function restoreThemeMode(): void {
+    if (typeof localStorage === 'undefined') {
+      syncDocumentThemeMode(themeMode)
+      return
+    }
+
+    const storedThemeMode = localStorage.getItem(THEME_MODE_STORAGE_KEY)
+    themeMode = isThemeMode(storedThemeMode) ? storedThemeMode : 'light'
+    syncDocumentThemeMode(themeMode)
+  }
+
+  function toggleThemeMode(): void {
+    themeMode = themeMode === 'dark' ? 'light' : 'dark'
+    syncDocumentThemeMode(themeMode)
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(THEME_MODE_STORAGE_KEY, themeMode)
+    }
+  }
+
+  function applyThemeModeToWorldviewStyle(style: string): string {
+    return themeMode === 'dark' ? `${style}; ${DARK_WORLDVIEW_THEME_STYLE}` : style
+  }
+
   function handleChatAuthStateChange(nextUser: ChatUser | null): void {
     chatAuthUser = nextUser
     isChatAuthChecking = false
@@ -1216,7 +1261,9 @@
   $: activeWorldviewName = selectedWorldview || worldviewOptions[0] || DEFAULT_WORLDVIEW_NAME
   $: activeWorldviewContent = resolveWorldviewContent(activeWorldviewName)
   $: currentWorldviewTheme = resolveWorldviewTheme(activeWorldviewName)
-  $: themeStyle = createWorldviewThemeStyle(currentWorldviewTheme)
+  $: themeStyle = applyThemeModeToWorldviewStyle(createWorldviewThemeStyle(currentWorldviewTheme))
+  $: themeToggleLabel = themeMode === 'dark' ? '切换日间模式' : '切换夜间模式'
+  $: themeToggleIcon = themeMode === 'dark' ? '/day.svg' : '/night.svg'
   $: chatMobileMenuItems = [
     ...navigationItems.map((item) => ({
       action: () => navigateToPage(item.page),
@@ -1225,6 +1272,13 @@
       id: item.id,
       label: item.label,
     })),
+    {
+      action: toggleThemeMode,
+      current: themeMode === 'dark',
+      icon: themeToggleIcon,
+      id: 'theme-mode',
+      label: themeToggleLabel,
+    },
     ...(chatAuthUser?.role === 'admin'
       ? [{
           action: openManagePanel,
@@ -1250,7 +1304,7 @@
       hasCover: worldviewTheme.coverImage !== '',
       name: worldview,
       tags: worldviewContent.tags,
-      themeStyle: createWorldviewThemeStyle(worldviewTheme),
+      themeStyle: applyThemeModeToWorldviewStyle(createWorldviewThemeStyle(worldviewTheme)),
     }
   })
   $: modeDescription =
@@ -1702,6 +1756,7 @@
   }
 
   onMount(() => {
+    restoreThemeMode()
     syncRouteWithLocation(true)
     hasMountedRouter = true
     void loadManagedWorldviews()
@@ -1850,6 +1905,20 @@
         {/if}
       </div>
     {/if}
+
+    <div class="side-nav-separator" aria-hidden="true"></div>
+
+    <button
+      aria-label={themeToggleLabel}
+      class:theme-is-dark={themeMode === 'dark'}
+      class="side-nav-button side-nav-button-theme"
+      data-nav-id="theme-mode"
+      title={themeToggleLabel}
+      type="button"
+      onclick={toggleThemeMode}
+    >
+      <img alt="" aria-hidden="true" class="side-nav-icon side-nav-icon-theme" src={themeToggleIcon} />
+    </button>
 
     <div class="side-nav-separator" aria-hidden="true"></div>
 

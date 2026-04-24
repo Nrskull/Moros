@@ -448,8 +448,8 @@
   .admin-page {
     min-height: 100%;
     padding: 24px;
-    background: var(--color-bg-base);
-    color: var(--color-text-base);
+    background: transparent;
+    color: var(--text);
   }
 
   .header,
@@ -464,7 +464,7 @@
 
   .eyebrow {
     font-size: 12px;
-    color: rgba(15, 23, 42, 0.56);
+    color: var(--muted);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
@@ -481,10 +481,10 @@
   .filter-card,
   .list-card,
   .status-card {
-    border: 1px solid rgba(148, 163, 184, 0.25);
+    border: 1px solid var(--line);
     border-radius: 20px;
-    background: rgba(255, 255, 255, 0.86);
-    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
+    background: var(--panel);
+    box-shadow: var(--card-shadow);
   }
 
   .filter-card,
@@ -532,7 +532,7 @@
   }
 
   .field-tip {
-    color: rgba(71, 85, 105, 0.82);
+    color: var(--muted);
     font-size: 12px;
     line-height: 1.5;
   }
@@ -541,11 +541,11 @@
   select,
   textarea,
   .character-item {
-    border: 1px solid rgba(148, 163, 184, 0.35);
+    border: 1px solid var(--line);
     border-radius: 14px;
     padding: 10px 12px;
     font: inherit;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--panel-strong);
     color: inherit;
   }
 
@@ -558,14 +558,14 @@
   }
 
   .character-item.selected {
-    border-color: rgba(15, 23, 42, 0.55);
-    background: rgba(226, 232, 240, 0.65);
+    border-color: var(--accent-border-strong);
+    background: var(--accent-surface);
   }
 
   .character-item span {
     display: block;
     font-size: 12px;
-    color: rgba(51, 65, 85, 0.78);
+    color: var(--muted);
   }
 
   .character-color {

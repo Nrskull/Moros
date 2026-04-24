@@ -279,6 +279,10 @@ code {
   --nav-icon-size: 20px;
 }
 
+.side-nav-icon-theme {
+  --nav-icon-size: 21px;
+}
+
 .side-nav-icon-more {
   --nav-icon-size: 20px;
 }
@@ -5673,4 +5677,420 @@ code {
   .age-cell {
     min-height: auto;
   }
+}
+
+:root[data-theme='dark'] {
+  --bg: #090d14;
+  --panel: rgba(17, 24, 35, 0.84);
+  --panel-strong: #111827;
+  --line: rgba(92, 108, 130, 0.62);
+  --line-strong: rgba(130, 148, 170, 0.72);
+  --text: #e8edf4;
+  --muted: #9aa7b8;
+  --accent: #9aaac0;
+  --accent-soft: rgba(154, 170, 192, 0.16);
+  --accent-surface: color-mix(in srgb, var(--accent) 16%, rgba(17, 24, 35, 0.96));
+  --accent-surface-strong: color-mix(in srgb, var(--accent) 24%, rgba(17, 24, 35, 0.96));
+  --accent-border: color-mix(in srgb, var(--accent) 36%, rgba(92, 108, 130, 0.88));
+  --accent-border-strong: color-mix(in srgb, var(--accent) 54%, rgba(130, 148, 170, 0.88));
+  --theme-surface-start: #101824;
+  --theme-surface-end: #0c111a;
+  --theme-glow: rgba(83, 111, 145, 0.24);
+  --theme-glow-soft: rgba(31, 42, 58, 0.32);
+  --shadow: 0 28px 80px rgba(0, 0, 0, 0.34);
+  --card-shadow: 0 18px 34px rgba(0, 0, 0, 0.28);
+
+  color-scheme: dark;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, var(--theme-glow), transparent 32%),
+    linear-gradient(180deg, var(--theme-surface-start) 0%, #0b1018 42%, var(--theme-surface-end) 100%);
+}
+
+:root[data-theme='dark'] body,
+:root[data-theme='dark'] #app {
+  background: var(--bg);
+  color: var(--text);
+}
+
+:root[data-theme='dark'] .shell {
+  color: var(--text);
+}
+
+:root[data-theme='dark'] .side-nav,
+:root[data-theme='dark'] .page-switcher,
+:root[data-theme='dark'] .worldview-dropdown-trigger,
+:root[data-theme='dark'] .worldview-dropdown-menu,
+:root[data-theme='dark'] .worldview-dropdown-item,
+:root[data-theme='dark'] .worldview-dropdown-create,
+:root[data-theme='dark'] .mobile-more-menu,
+:root[data-theme='dark'] .hero-panel,
+:root[data-theme='dark'] .board,
+:root[data-theme='dark'] .tag-filter-panel,
+:root[data-theme='dark'] .track-panel,
+:root[data-theme='dark'] .worldview-panel,
+:root[data-theme='dark'] .timeline-frame,
+:root[data-theme='dark'] .timeline-event,
+:root[data-theme='dark'] .chat-board,
+:root[data-theme='dark'] .chat-panel,
+:root[data-theme='dark'] .chat-room-card,
+:root[data-theme='dark'] .chat-message-panel,
+:root[data-theme='dark'] .chat-mobile-more-panel,
+:root[data-theme='dark'] .chat-character-dropdown,
+:root[data-theme='dark'] .chat-character-menu,
+:root[data-theme='dark'] .chat-message-action-menu,
+:root[data-theme='dark'] .chat-character-sheet-page,
+:root[data-theme='dark'] .chat-nickname-dialog,
+:root[data-theme='dark'] .chat-character-dialog,
+:root[data-theme='dark'] .chat-avatar-crop-dialog,
+:root[data-theme='dark'] .drawer-panel,
+:root[data-theme='dark'] .age-panel,
+:root[data-theme='dark'] .age-editor-card,
+:root[data-theme='dark'] .age-legend-card,
+:root[data-theme='dark'] .age-empty-state,
+:root[data-theme='dark'] .age-note-dialog,
+:root[data-theme='dark'] .age-note-admin-card,
+:root[data-theme='dark'] .age-entry-readonly-note,
+:root[data-theme='dark'] .age-editor-lock-note,
+:root[data-theme='dark'] .log-worldview-card,
+:root[data-theme='dark'] .log-worldview-panel,
+:root[data-theme='dark'] .log-record-item,
+:root[data-theme='dark'] .log-upload-row,
+:root[data-theme='dark'] .log-summary-card,
+:root[data-theme='dark'] .log-pane,
+:root[data-theme='dark'] .log-review-panel,
+:root[data-theme='dark'] .log-review-item,
+:root[data-theme='dark'] .log-playback-current,
+:root[data-theme='dark'] .log-playback-item,
+:root[data-theme='dark'] .log-empty-state,
+:root[data-theme='dark'] .log-empty-inline,
+:root[data-theme='dark'] .tools-overview,
+:root[data-theme='dark'] .admin-page,
+:root[data-theme='dark'] .editor-card,
+:root[data-theme='dark'] .filter-card,
+:root[data-theme='dark'] .list-card,
+:root[data-theme='dark'] .status-card,
+:root[data-theme='dark'] .empty-card {
+  border-color: var(--line);
+  background: var(--panel);
+  box-shadow: var(--card-shadow);
+  color: var(--text);
+}
+
+:root[data-theme='dark'] .admin-page,
+:root[data-theme='dark'] .chat-page,
+:root[data-theme='dark'] .age-page,
+:root[data-theme='dark'] .log-page,
+:root[data-theme='dark'] .tools-overview {
+  background: transparent;
+}
+
+:root[data-theme='dark'] .side-nav-button::after,
+:root[data-theme='dark'] .hero-stats article,
+:root[data-theme='dark'] .tag-filter-chip,
+:root[data-theme='dark'] .worldview-tab,
+:root[data-theme='dark'] .event-action,
+:root[data-theme='dark'] .event-tags span,
+:root[data-theme='dark'] .board-foot span,
+:root[data-theme='dark'] .chat-system-message,
+:root[data-theme='dark'] .chat-composer-reply-chip,
+:root[data-theme='dark'] .chat-character-trigger,
+:root[data-theme='dark'] .chat-character-settings-trigger,
+:root[data-theme='dark'] .chat-character-option-main,
+:root[data-theme='dark'] .chat-character-option-edit,
+:root[data-theme='dark'] .chat-character-create,
+:root[data-theme='dark'] .chat-room-permissions-user,
+:root[data-theme='dark'] .toolbar-action,
+:root[data-theme='dark'] .age-remove,
+:root[data-theme='dark'] .age-character-chip,
+:root[data-theme='dark'] .age-chronicle-head,
+:root[data-theme='dark'] .age-chronicle-cell,
+:root[data-theme='dark'] .age-character-head,
+:root[data-theme='dark'] .age-value-cell,
+:root[data-theme='dark'] .log-worldview-count,
+:root[data-theme='dark'] .log-worldview-toggle,
+:root[data-theme='dark'] .log-entry-row,
+:root[data-theme='dark'] .log-entry-index,
+:root[data-theme='dark'] .log-entry-badge,
+:root[data-theme='dark'] .log-display-toggle,
+:root[data-theme='dark'] .log-character-row,
+:root[data-theme='dark'] .log-export-preview,
+:root[data-theme='dark'] .log-playback-overview,
+:root[data-theme='dark'] .log-playback-caption,
+:root[data-theme='dark'] .log-name-inline,
+:root[data-theme='dark'] .log-message-inline,
+:root[data-theme='dark'] .mobile-more-item,
+:root[data-theme='dark'] .mobile-more-worldview-list button,
+:root[data-theme='dark'] .chat-mobile-menu-item {
+  border-color: var(--line);
+  background: rgba(22, 31, 45, 0.78);
+  color: var(--text);
+}
+
+:root[data-theme='dark'] input,
+:root[data-theme='dark'] textarea,
+:root[data-theme='dark'] select,
+:root[data-theme='dark'] .drawer-field input,
+:root[data-theme='dark'] .drawer-field textarea,
+:root[data-theme='dark'] .drawer-field select,
+:root[data-theme='dark'] .age-field input,
+:root[data-theme='dark'] .age-field textarea,
+:root[data-theme='dark'] .age-field select,
+:root[data-theme='dark'] .chat-composer-field textarea,
+:root[data-theme='dark'] .chat-nickname-field input,
+:root[data-theme='dark'] .chat-character-field input,
+:root[data-theme='dark'] .log-page-size select,
+:root[data-theme='dark'] .log-entry-time-field input,
+:root[data-theme='dark'] .log-speed-field select,
+:root[data-theme='dark'] .log-name-input,
+:root[data-theme='dark'] .log-message-input,
+:root[data-theme='dark'] .log-character-name-input {
+  border-color: var(--line);
+  background: rgba(8, 13, 21, 0.82);
+  color: var(--text);
+}
+
+:root[data-theme='dark'] input::placeholder,
+:root[data-theme='dark'] textarea::placeholder {
+  color: rgba(154, 167, 184, 0.72);
+}
+
+:root[data-theme='dark'] .hero-copy h1,
+:root[data-theme='dark'] .board-head h2,
+:root[data-theme='dark'] .hero-stats strong,
+:root[data-theme='dark'] .worldview-dropdown-trigger strong,
+:root[data-theme='dark'] .worldview-dropdown-item strong,
+:root[data-theme='dark'] .worldview-dropdown-create,
+:root[data-theme='dark'] .toolbar-ghost,
+:root[data-theme='dark'] .tag-filter-summary strong,
+:root[data-theme='dark'] .worldview-tab,
+:root[data-theme='dark'] .timeline-event strong,
+:root[data-theme='dark'] .event-title,
+:root[data-theme='dark'] .chat-panel-head strong,
+:root[data-theme='dark'] .chat-message-head strong,
+:root[data-theme='dark'] .chat-room-card strong,
+:root[data-theme='dark'] .chat-member-item strong,
+:root[data-theme='dark'] .chat-empty-state strong,
+:root[data-theme='dark'] .chat-message-meta strong,
+:root[data-theme='dark'] .chat-nickname-dialog h3,
+:root[data-theme='dark'] .drawer-header h3,
+:root[data-theme='dark'] .age-panel-head h3,
+:root[data-theme='dark'] .age-editor-toggle-copy strong,
+:root[data-theme='dark'] .age-editor-topline strong,
+:root[data-theme='dark'] .age-character-chip strong,
+:root[data-theme='dark'] .age-legend-copy strong,
+:root[data-theme='dark'] .age-empty-state strong,
+:root[data-theme='dark'] .age-chronicle-cell strong,
+:root[data-theme='dark'] .age-character-head strong,
+:root[data-theme='dark'] .age-value-cell strong,
+:root[data-theme='dark'] .age-note-dialog-copy h3,
+:root[data-theme='dark'] .age-note-dialog-section-head strong,
+:root[data-theme='dark'] .log-worldview-copy strong,
+:root[data-theme='dark'] .log-worldview-count strong,
+:root[data-theme='dark'] .log-record-copy strong,
+:root[data-theme='dark'] .log-upload-copy strong,
+:root[data-theme='dark'] .log-summary-card strong,
+:root[data-theme='dark'] .log-pane-head strong,
+:root[data-theme='dark'] .log-character-copy strong,
+:root[data-theme='dark'] .log-playback-current strong,
+:root[data-theme='dark'] .log-playback-item strong,
+:root[data-theme='dark'] .log-review-head strong,
+:root[data-theme='dark'] .log-review-item strong,
+:root[data-theme='dark'] .log-empty-state strong {
+  color: var(--text);
+}
+
+:root[data-theme='dark'] .eyebrow,
+:root[data-theme='dark'] .section-label,
+:root[data-theme='dark'] .stat-label,
+:root[data-theme='dark'] .board-note,
+:root[data-theme='dark'] .event-range,
+:root[data-theme='dark'] .event-track,
+:root[data-theme='dark'] .lede,
+:root[data-theme='dark'] .worldview-dropdown-label,
+:root[data-theme='dark'] .worldview-dropdown-item span,
+:root[data-theme='dark'] .chat-panel-head span,
+:root[data-theme='dark'] .chat-message-head span,
+:root[data-theme='dark'] .chat-room-card span,
+:root[data-theme='dark'] .chat-member-item span,
+:root[data-theme='dark'] .chat-composer-actions span,
+:root[data-theme='dark'] .chat-system-message time,
+:root[data-theme='dark'] .chat-message-meta time,
+:root[data-theme='dark'] .chat-empty-inline,
+:root[data-theme='dark'] .chat-empty-state p,
+:root[data-theme='dark'] .chat-nickname-dialog p,
+:root[data-theme='dark'] .field-tip,
+:root[data-theme='dark'] .age-panel-tip,
+:root[data-theme='dark'] .age-editor-year,
+:root[data-theme='dark'] .age-editor-kicker,
+:root[data-theme='dark'] .age-editor-hint,
+:root[data-theme='dark'] .age-field span,
+:root[data-theme='dark'] .age-legend-copy span,
+:root[data-theme='dark'] .age-empty-state p,
+:root[data-theme='dark'] .age-chronicle-cell span,
+:root[data-theme='dark'] .age-character-head span,
+:root[data-theme='dark'] .age-value-cell span,
+:root[data-theme='dark'] .age-note-dialog-copy p,
+:root[data-theme='dark'] .age-note-dialog-tip,
+:root[data-theme='dark'] .age-note-admin-meta span,
+:root[data-theme='dark'] .age-note-admin-card p,
+:root[data-theme='dark'] .age-editor-lock-note p,
+:root[data-theme='dark'] .log-worldview-copy p,
+:root[data-theme='dark'] .log-worldview-count span,
+:root[data-theme='dark'] .log-worldview-toggle,
+:root[data-theme='dark'] .log-record-copy p,
+:root[data-theme='dark'] .log-upload-copy p,
+:root[data-theme='dark'] .log-page-jump-bar span,
+:root[data-theme='dark'] .log-summary-card p,
+:root[data-theme='dark'] .log-pane-head span,
+:root[data-theme='dark'] .log-side-head span,
+:root[data-theme='dark'] .log-entry-time-label,
+:root[data-theme='dark'] .log-character-copy span,
+:root[data-theme='dark'] .log-empty-inline,
+:root[data-theme='dark'] .log-playback-overview span,
+:root[data-theme='dark'] .log-playback-caption-head span,
+:root[data-theme='dark'] .log-review-head span,
+:root[data-theme='dark'] .log-review-item p,
+:root[data-theme='dark'] .log-empty-state p {
+  color: var(--muted);
+}
+
+:root[data-theme='dark'] .side-nav-icon,
+:root[data-theme='dark'] .chat-mobile-menu-item img,
+:root[data-theme='dark'] .mobile-more-item img,
+:root[data-theme='dark'] .mobile-more-title img {
+  filter: brightness(1.65) contrast(0.92);
+}
+
+:root[data-theme='dark'] .side-nav-button:hover:not(:disabled) .side-nav-icon,
+:root[data-theme='dark'] .side-nav-button.is-current .side-nav-icon,
+:root[data-theme='dark'] .side-nav-button.theme-is-dark .side-nav-icon {
+  filter: brightness(2) contrast(0.96);
+}
+
+:root[data-theme='dark'] .side-nav-button.theme-is-dark {
+  background: rgba(154, 170, 192, 0.14);
+}
+
+:root[data-theme='dark'] .worldview-dropdown-item:hover,
+:root[data-theme='dark'] .worldview-dropdown-item.is-current,
+:root[data-theme='dark'] .worldview-dropdown-create:hover,
+:root[data-theme='dark'] .tag-filter-chip:hover,
+:root[data-theme='dark'] .tag-filter-chip.is-selected,
+:root[data-theme='dark'] .worldview-tab:hover,
+:root[data-theme='dark'] .worldview-tab.is-current,
+:root[data-theme='dark'] .toolbar-action:hover,
+:root[data-theme='dark'] .chat-mobile-menu-item:hover:not(:disabled),
+:root[data-theme='dark'] .chat-mobile-menu-item.is-current,
+:root[data-theme='dark'] .mobile-more-item:hover:not(:disabled),
+:root[data-theme='dark'] .mobile-more-worldview-list button:hover,
+:root[data-theme='dark'] .mobile-more-worldview-list button.is-current,
+:root[data-theme='dark'] .chat-room-card:hover,
+:root[data-theme='dark'] .chat-member-item:hover,
+:root[data-theme='dark'] .chat-room-card.is-active,
+:root[data-theme='dark'] .chat-character-option-main.is-active,
+:root[data-theme='dark'] .log-playback-item.is-current {
+  border-color: var(--accent-border);
+  background: var(--accent-surface);
+}
+
+:root[data-theme='dark'] .hero-panel::before,
+:root[data-theme='dark'] .board::before,
+:root[data-theme='dark'] .drawer-panel::before,
+:root[data-theme='dark'] .age-panel::before,
+:root[data-theme='dark'] .log-summary-card::before,
+:root[data-theme='dark'] .log-pane::before {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 34%),
+    linear-gradient(180deg, transparent, rgba(8, 13, 21, 0.42));
+}
+
+:root[data-theme='dark'] .hero-panel-worldview.is-plain,
+:root[data-theme='dark'] .log-worldview-stage.is-plain {
+  background:
+    linear-gradient(180deg, rgba(17, 24, 35, 0.94), rgba(12, 17, 26, 0.94));
+}
+
+:root[data-theme='dark'] .hero-panel-worldview.is-plain .worldview-hero-copy h1,
+:root[data-theme='dark'] .log-worldview-stage.is-plain .log-worldview-copy strong {
+  color: var(--text);
+}
+
+:root[data-theme='dark'] .hero-panel-worldview.is-plain .hero-pill-row span,
+:root[data-theme='dark'] .hero-pill-row span {
+  border-color: var(--line);
+  background: rgba(22, 31, 45, 0.7);
+  color: var(--muted);
+}
+
+:root[data-theme='dark'] .timeline-scroll {
+  border-color: var(--line);
+  background:
+    linear-gradient(180deg, rgba(17, 24, 35, 0.9), rgba(9, 13, 20, 0.94));
+}
+
+:root[data-theme='dark'] .timeline-surface {
+  background-image:
+    linear-gradient(180deg, rgba(17, 24, 35, 0.82), rgba(9, 13, 20, 0.9)),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(var(--track-size) - 24px),
+      rgba(154, 170, 192, 0.1) calc(var(--track-size) - 24px),
+      rgba(154, 170, 192, 0.1) var(--track-size)
+    );
+}
+
+:root[data-theme='dark'] .timeline-track-band span,
+:root[data-theme='dark'] .timeline-tick span {
+  background: rgba(8, 13, 21, 0.86);
+  color: var(--muted);
+}
+
+:root[data-theme='dark'] .timeline-tick::after {
+  background: rgba(130, 148, 170, 0.24);
+}
+
+:root[data-theme='dark'] .timeline-event {
+  background:
+    linear-gradient(180deg, rgba(18, 28, 42, 0.98), color-mix(in srgb, var(--accent) 12%, rgba(12, 17, 26, 0.96)));
+}
+
+:root[data-theme='dark'] .chat-message-bubble,
+:root[data-theme='dark'] .chat-message-narration,
+:root[data-theme='dark'] .chat-message-reply-preview,
+:root[data-theme='dark'] .chat-dice-bubble {
+  border-color: var(--line);
+  background: rgba(22, 31, 45, 0.88);
+  color: var(--text);
+}
+
+:root[data-theme='dark'] .chat-message-group.is-own .chat-message-bubble {
+  background: color-mix(in srgb, var(--accent) 24%, rgba(22, 31, 45, 0.96));
+}
+
+:root[data-theme='dark'] .chat-composer,
+:root[data-theme='dark'] .log-playback-caption {
+  border-color: var(--line);
+  background: rgba(12, 17, 26, 0.92);
+}
+
+:root[data-theme='dark'] .chat-nickname-overlay,
+:root[data-theme='dark'] .age-note-overlay {
+  background: rgba(0, 0, 0, 0.54);
+}
+
+:root[data-theme='dark'] .log-playback-screen {
+  background:
+    radial-gradient(circle at 76% 12%, rgba(255, 255, 255, 0.16), transparent 18%),
+    linear-gradient(180deg, #101827, #080d14);
+}
+
+:root[data-theme='dark'] .danger-button,
+:root[data-theme='dark'] .chat-error-banner,
+:root[data-theme='dark'] .chat-nickname-error,
+:root[data-theme='dark'] .log-error-banner {
+  border-color: rgba(248, 113, 113, 0.38);
+  background: rgba(127, 29, 29, 0.24);
+  color: #fecaca;
 }
