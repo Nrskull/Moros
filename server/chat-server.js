@@ -112,9 +112,27 @@ const VERTICAL_TIMELINE_MAX_BODY_LENGTH = 12000
 const VERTICAL_TIMELINE_MAX_TAG_COUNT = 24
 const VERTICAL_TIMELINE_MAX_TAG_LENGTH = 32
 const VERTICAL_TIMELINE_MAX_COLOR_LENGTH = 24
+const WORLDVIEW_MAX_NAME_LENGTH = 80
+const WORLDVIEW_MAX_DESCRIPTION_LENGTH = 2000
+const WORLDVIEW_MAX_COVER_IMAGE_LENGTH = 400
 const CHAT_PRESENTATION_BUBBLE = 'bubble'
 const CHAT_PRESENTATION_KP_NARRATION = 'kp-narration'
 const ADMIN_KP_CHARACTER_NAME = 'KP'
+
+const DEFAULT_MANAGED_WORLDVIEWS = [
+  {
+    coverImage: '',
+    description: '旧城调查线围绕档案、河道与教堂遗址展开，阅读重点是线索回环和多线并进。',
+    name: '莫名其妙',
+    tags: ['旧城', '档案', '河道'],
+  },
+  {
+    coverImage: '/background.jpg',
+    description: '盐港怪谈线更偏海岸异闻与潮汐仪式，节奏应该显得更冷、更潮、更有雾感。',
+    name: '铛铛铛铛',
+    tags: ['海岸', '灯塔', '潮汐'],
+  },
+]
 
 const ATTRIBUTE_DEFINITIONS = [
   { key: 'strength', label: '力量' },
@@ -521,6 +539,20 @@ database.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_room_memberships_user_id ON room_memberships(user_id);
 
+  CREATE TABLE IF NOT EXISTS worldviews (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    description TEXT NOT NULL,
+    cover_image TEXT NOT NULL,
+    tags_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    created_by_user_id TEXT,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_worldviews_name ON worldviews(name);
+
   CREATE TABLE IF NOT EXISTS character_cards (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -601,6 +633,27 @@ database.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_age_chronicle_cell_notes_worldview_entry
     ON age_chronicle_cell_notes(worldview_name, entry_id, profile_id, updated_at);
+
+  CREATE TABLE IF NOT EXISTS timeline_events (
+    id TEXT PRIMARY KEY,
+    worldview TEXT NOT NULL,
+    lane_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    body TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    start_time INTEGER NOT NULL,
+    end_time INTEGER NOT NULL,
+    detail_image TEXT,
+    detail_html TEXT,
+    created_by_user_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_timeline_events_worldview_lane
+    ON timeline_events(worldview, lane_id, start_time);
 
   CREATE TABLE IF NOT EXISTS vertical_timeline_states (
     worldview_name TEXT PRIMARY KEY,
@@ -847,6 +900,130 @@ const statementSelectManageableUsers = database.prepare(`
   WHERE role != 'admin'
     AND status = 'active'
   ORDER BY display_name COLLATE NOCASE ASC, handle COLLATE NOCASE ASC
+`)
+
+const statementSelectWorldviews = database.prepare(`
+  SELECT
+    id,
+    name,
+    description,
+    cover_image AS coverImage,
+    tags_json AS tagsJson,
+    created_at AS createdAt,
+    updated_at AS updatedAt,
+    created_by_user_id AS createdByUserId
+  FROM worldviews
+  ORDER BY updated_at DESC, created_at DESC, name COLLATE NOCASE ASC
+`)
+
+const statementSelectWorldviewById = database.prepare(`
+  SELECT
+    id,
+    name,
+    description,
+    cover_image AS coverImage,
+    tags_json AS tagsJson,
+    created_at AS createdAt,
+    updated_at AS updatedAt,
+    created_by_user_id AS createdByUserId
+  FROM worldviews
+  WHERE id = ?
+  LIMIT 1
+`)
+
+const statementSelectWorldviewByName = database.prepare(`
+  SELECT
+    id,
+    name,
+    description,
+    cover_image AS coverImage,
+    tags_json AS tagsJson,
+    created_at AS createdAt,
+    updated_at AS updatedAt,
+    created_by_user_id AS createdByUserId
+  FROM worldviews
+  WHERE lower(name) = lower(?)
+  LIMIT 1
+`)
+
+const statementInsertWorldview = database.prepare(`
+  INSERT INTO worldviews (
+    id,
+    name,
+    description,
+    cover_image,
+    tags_json,
+    created_at,
+    updated_at,
+    created_by_user_id
+  )
+  VALUES (
+    @id,
+    @name,
+    @description,
+    @coverImage,
+    @tagsJson,
+    @createdAt,
+    @updatedAt,
+    @createdByUserId
+  )
+`)
+
+const statementUpdateWorldviewMetadata = database.prepare(`
+  UPDATE worldviews
+  SET name = @name,
+      description = @description,
+      cover_image = @coverImage,
+      tags_json = @tagsJson,
+      updated_at = @updatedAt
+  WHERE id = @id
+`)
+
+const statementSelectDistinctWorldviewNamesFromData = database.prepare(`
+  SELECT name
+  FROM (
+    SELECT worldview AS name
+    FROM character_cards
+    WHERE worldview != ''
+
+    UNION
+
+    SELECT worldview_name AS name
+    FROM age_chronicle_states
+
+    UNION
+
+    SELECT worldview_name AS name
+    FROM age_chronicle_entries
+
+    UNION
+
+    SELECT worldview_name AS name
+    FROM age_chronicle_structures
+
+    UNION
+
+    SELECT worldview_name AS name
+    FROM age_chronicle_cell_notes
+
+    UNION
+
+    SELECT worldview_name AS name
+    FROM vertical_timeline_states
+
+    UNION
+
+    SELECT worldview_name AS name
+    FROM vertical_timeline_lane_permissions
+
+    UNION
+
+    SELECT worldview AS name
+    FROM timeline_events
+    WHERE worldview != ''
+  )
+  WHERE name != ''
+  ORDER BY name COLLATE NOCASE ASC
 `)
 
 const statementSelectRoomMembershipsForPermissions = database.prepare(`
@@ -1141,6 +1318,57 @@ const statementDeleteVerticalTimelineLanePermission = database.prepare(`
   WHERE worldview_name = @worldviewName
     AND lane_id = @laneId
     AND user_id = @userId
+`)
+
+const statementUpdateCharacterCardsWorldview = database.prepare(`
+  UPDATE character_cards
+  SET worldview = @newWorldviewName
+  WHERE worldview = @oldWorldviewName
+`)
+
+const statementUpdateTimelineEventsWorldview = database.prepare(`
+  UPDATE timeline_events
+  SET worldview = @newWorldviewName
+  WHERE worldview = @oldWorldviewName
+`)
+
+const statementUpdateAgeChronicleStatesWorldview = database.prepare(`
+  UPDATE age_chronicle_states
+  SET worldview_name = @newWorldviewName
+  WHERE worldview_name = @oldWorldviewName
+`)
+
+const statementUpdateAgeChronicleEntriesWorldview = database.prepare(`
+  UPDATE age_chronicle_entries
+  SET worldview_name = @newWorldviewName
+  WHERE worldview_name = @oldWorldviewName
+`)
+
+const statementUpdateAgeChronicleStructuresWorldview = database.prepare(`
+  UPDATE age_chronicle_structures
+  SET worldview_name = @newWorldviewName
+  WHERE worldview_name = @oldWorldviewName
+`)
+
+const statementUpdateAgeChronicleCellNotesWorldview = database.prepare(`
+  UPDATE age_chronicle_cell_notes
+  SET worldview_name = @newWorldviewName
+  WHERE worldview_name = @oldWorldviewName
+`)
+
+const statementUpdateVerticalTimelineStateWorldview = database.prepare(`
+  UPDATE vertical_timeline_states
+  SET worldview_name = @newWorldviewName,
+      state_json = @stateJson,
+      updated_at = @updatedAt,
+      updated_by_user_id = @updatedByUserId
+  WHERE worldview_name = @oldWorldviewName
+`)
+
+const statementUpdateVerticalTimelineLanePermissionsWorldview = database.prepare(`
+  UPDATE vertical_timeline_lane_permissions
+  SET worldview_name = @newWorldviewName
+  WHERE worldview_name = @oldWorldviewName
 `)
 
 const statementInsertRoomMembership = database.prepare(`
@@ -1744,6 +1972,8 @@ ensureRoomMembership(PUBLIC_ROOM.id, ADMIN_USER.id, 'owner')
 statementDeleteExpiredAuthSessions.run(Date.now())
 const adminAccessKeySeed = ensureAdminAccessKey()
 const seededUserAccessKeys = ensureSeededUsers()
+ensureDefaultManagedWorldviews()
+syncWorldviewRecordsFromData()
 ensureAdminKpCharacter()
 
 const roomConnections = new Map()
@@ -2137,6 +2367,238 @@ function ensureRoomMembership(roomId, userId, role = 'member') {
     userId,
   })
 }
+
+function createWorldviewId() {
+  return `worldview_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
+}
+
+function sanitiseWorldviewName(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, WORLDVIEW_MAX_NAME_LENGTH)
+}
+
+function sanitiseWorldviewDescription(value) {
+  return String(value ?? '').trim().slice(0, WORLDVIEW_MAX_DESCRIPTION_LENGTH)
+}
+
+function sanitiseWorldviewCoverImage(value) {
+  return String(value ?? '').trim().slice(0, WORLDVIEW_MAX_COVER_IMAGE_LENGTH)
+}
+
+function sanitiseWorldviewTags(value) {
+  const source = Array.isArray(value) ? value : []
+  const seenTags = new Set()
+  const tags = []
+
+  for (const entry of source) {
+    const tag = sanitiseVerticalTimelineShortText(entry, VERTICAL_TIMELINE_MAX_TAG_LENGTH)
+
+    if (tag === '' || seenTags.has(tag)) {
+      continue
+    }
+
+    seenTags.add(tag)
+    tags.push(tag)
+
+    if (tags.length >= VERTICAL_TIMELINE_MAX_TAG_COUNT) {
+      break
+    }
+  }
+
+  return tags
+}
+
+function parseWorldviewTags(rawTagsJson) {
+  if (typeof rawTagsJson !== 'string' || rawTagsJson.trim() === '') {
+    return []
+  }
+
+  try {
+    return sanitiseWorldviewTags(JSON.parse(rawTagsJson))
+  } catch {
+    return []
+  }
+}
+
+function serialiseWorldview(row) {
+  return {
+    coverImage: sanitiseWorldviewCoverImage(row.coverImage),
+    createdAt: Number(row.createdAt ?? 0),
+    createdByUserId: String(row.createdByUserId ?? '').trim() || null,
+    description: sanitiseWorldviewDescription(row.description),
+    id: String(row.id ?? '').trim(),
+    name: sanitiseWorldviewName(row.name),
+    tags: parseWorldviewTags(row.tagsJson),
+    updatedAt: Number(row.updatedAt ?? 0),
+  }
+}
+
+function hasManagedWorldview(name) {
+  const safeName = sanitiseWorldviewName(name)
+  return safeName !== '' && Boolean(statementSelectWorldviewByName.get(safeName))
+}
+
+function writeManagedWorldviewNotFound(response, headers, worldviewName) {
+  writeJson(response, 404, {
+    message: `世界观“${sanitiseWorldviewName(worldviewName)}”不存在。`,
+    ok: false,
+  }, { headers })
+}
+
+function ensureWorldviewRecord(name, options = {}) {
+  const safeName = sanitiseWorldviewName(name)
+
+  if (safeName === '') {
+    return null
+  }
+
+  const existing = statementSelectWorldviewByName.get(safeName)
+
+  if (existing) {
+    return serialiseWorldview(existing)
+  }
+
+  const now = Number.isFinite(Number(options.updatedAt)) ? Number(options.updatedAt) : Date.now()
+
+  statementInsertWorldview.run({
+    coverImage: sanitiseWorldviewCoverImage(options.coverImage),
+    createdAt: now,
+    createdByUserId: String(options.createdByUserId ?? '').trim() || ADMIN_USER.id,
+    description: sanitiseWorldviewDescription(options.description) || '当前世界观简介尚待补充。',
+    id: createWorldviewId(),
+    name: safeName,
+    tagsJson: JSON.stringify(sanitiseWorldviewTags(options.tags)),
+    updatedAt: now,
+  })
+
+  return serialiseWorldview(statementSelectWorldviewByName.get(safeName))
+}
+
+function ensureDefaultManagedWorldviews() {
+  const now = Date.now()
+
+  for (const worldview of DEFAULT_MANAGED_WORLDVIEWS) {
+    ensureWorldviewRecord(worldview.name, {
+      coverImage: worldview.coverImage,
+      createdByUserId: ADMIN_USER.id,
+      description: worldview.description,
+      tags: worldview.tags,
+      updatedAt: now,
+    })
+  }
+}
+
+function syncWorldviewRecordsFromData() {
+  for (const row of statementSelectDistinctWorldviewNamesFromData.all()) {
+    ensureWorldviewRecord(row.name, { createdByUserId: ADMIN_USER.id })
+  }
+}
+
+function rewriteVerticalTimelineStateJsonWorldview(rawStateJson, nextWorldviewName) {
+  try {
+    const parsed = JSON.parse(rawStateJson)
+    const safeState = sanitiseVerticalTimelineState(parsed, nextWorldviewName)
+      ?? createDefaultVerticalTimelineState(nextWorldviewName)
+    return JSON.stringify(safeState)
+  } catch {
+    return JSON.stringify(createDefaultVerticalTimelineState(nextWorldviewName))
+  }
+}
+
+const renameWorldviewReferences = database.transaction((worldviewId, payload, updatedByUserId) => {
+  const existingRow = statementSelectWorldviewById.get(worldviewId)
+
+  if (!existingRow) {
+    return {
+      error: '目标世界观不存在。',
+      status: 404,
+    }
+  }
+
+  const existing = serialiseWorldview(existingRow)
+  const nextName = sanitiseWorldviewName(payload?.name)
+
+  if (nextName === '') {
+    return {
+      error: '世界观名称不能为空。',
+      status: 400,
+    }
+  }
+
+  const conflicting = statementSelectWorldviewByName.get(nextName)
+
+  if (conflicting && conflicting.id !== existing.id) {
+    return {
+      error: `世界观“${nextName}”已经存在。`,
+      status: 409,
+    }
+  }
+
+  const updatedAt = Date.now()
+  const description = sanitiseWorldviewDescription(payload?.description) || '当前世界观简介尚待补充。'
+  const coverImage = sanitiseWorldviewCoverImage(payload?.coverImage)
+  const tags = sanitiseWorldviewTags(payload?.tags)
+
+  if (existing.name !== nextName) {
+    const verticalTimelineRow = statementSelectVerticalTimelineState.get(existing.name)
+    const nextStateJson = verticalTimelineRow
+      ? rewriteVerticalTimelineStateJsonWorldview(verticalTimelineRow.stateJson, nextName)
+      : null
+
+    statementUpdateCharacterCardsWorldview.run({
+      newWorldviewName: nextName,
+      oldWorldviewName: existing.name,
+    })
+    statementUpdateTimelineEventsWorldview.run({
+      newWorldviewName: nextName,
+      oldWorldviewName: existing.name,
+    })
+    statementUpdateAgeChronicleStatesWorldview.run({
+      newWorldviewName: nextName,
+      oldWorldviewName: existing.name,
+    })
+    statementUpdateAgeChronicleEntriesWorldview.run({
+      newWorldviewName: nextName,
+      oldWorldviewName: existing.name,
+    })
+    statementUpdateAgeChronicleStructuresWorldview.run({
+      newWorldviewName: nextName,
+      oldWorldviewName: existing.name,
+    })
+    statementUpdateAgeChronicleCellNotesWorldview.run({
+      newWorldviewName: nextName,
+      oldWorldviewName: existing.name,
+    })
+
+    if (nextStateJson !== null) {
+      statementUpdateVerticalTimelineStateWorldview.run({
+        newWorldviewName: nextName,
+        oldWorldviewName: existing.name,
+        stateJson: nextStateJson,
+        updatedAt,
+        updatedByUserId,
+      })
+    }
+
+    statementUpdateVerticalTimelineLanePermissionsWorldview.run({
+      newWorldviewName: nextName,
+      oldWorldviewName: existing.name,
+    })
+  }
+
+  statementUpdateWorldviewMetadata.run({
+    coverImage,
+    description,
+    id: existing.id,
+    name: nextName,
+    tagsJson: JSON.stringify(tags),
+    updatedAt,
+  })
+
+  return {
+    previousName: existing.name,
+    worldview: serialiseWorldview(statementSelectWorldviewById.get(existing.id)),
+  }
+})
 
 function ensureSeededUsers() {
   const now = Date.now()
@@ -2730,6 +3192,10 @@ function buildAgeChronicleCapabilities(authContext) {
 }
 
 function buildAgeChronicleStateForViewer(worldviewName, authContext) {
+  if (!hasManagedWorldview(worldviewName)) {
+    return null
+  }
+
   ensureAgeChronicleWorldviewInitialised(worldviewName)
 
   const structureRow = statementSelectAgeChronicleStructure.get(worldviewName)
@@ -3481,6 +3947,10 @@ function buildVerticalTimelineLanePermissionsForViewer(worldviewName, lanes, isA
 }
 
 function buildVerticalTimelineStateForViewer(worldviewName, authContext) {
+  if (!hasManagedWorldview(worldviewName)) {
+    return null
+  }
+
   ensureVerticalTimelineWorldviewInitialised(worldviewName)
 
   const row = statementSelectVerticalTimelineState.get(worldviewName)
@@ -4146,6 +4616,12 @@ function createCharacterCardForUser(userId, payload) {
   const characterId = createCharacterId()
   const now = Date.now()
 
+  if (!statementSelectWorldviewByName.get(worldview)) {
+    return {
+      error: '目标世界观不存在，请先由管理员创建后再使用。',
+    }
+  }
+
   statementInsertCharacterCard.run({
     createdAt: now,
     color: sanitiseVerticalTimelineColor(payload?.color, '#64748b'),
@@ -4213,6 +4689,12 @@ function updateCharacterCardForUser(userId, payload) {
 
   const attributes = normaliseCharacterAttributes(payload?.attributes)
   const updatedAt = Date.now()
+
+  if (!statementSelectWorldviewByName.get(worldview)) {
+    return {
+      error: '目标世界观不存在，请先由管理员创建后再使用。',
+    }
+  }
 
   statementUpdateCharacterCard.run({
     color: sanitiseVerticalTimelineColor(payload?.color, existingCharacter.color),
@@ -5369,6 +5851,112 @@ function handleLogout(request, response) {
   )
 }
 
+function handleWorldviewsGet(request, response) {
+  const headers = appendCorsHeaders(request)
+
+  try {
+    syncWorldviewRecordsFromData()
+    writeJson(response, 200, {
+      ok: true,
+      worldviews: statementSelectWorldviews.all().map(serialiseWorldview),
+    }, { headers })
+  } catch (error) {
+    writeJson(response, 500, { message: String(error), ok: false }, { headers })
+  }
+}
+
+async function handleWorldviewCreate(request, response) {
+  const headers = appendCorsHeaders(request)
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '创建世界观需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  if (authContext.user.role !== 'admin') {
+    writeJson(response, 403, { message: '只有管理员可以创建世界观。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 64 * 1024)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '世界观内容过大，请删减后再试。'
+      : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const name = sanitiseWorldviewName(body?.name)
+
+  if (name === '') {
+    writeJson(response, 400, { message: '世界观名称不能为空。', ok: false }, { headers })
+    return
+  }
+
+  if (statementSelectWorldviewByName.get(name)) {
+    writeJson(response, 409, { message: `世界观“${name}”已经存在。`, ok: false }, { headers })
+    return
+  }
+
+  const worldview = ensureWorldviewRecord(name, {
+    coverImage: body?.coverImage,
+    createdByUserId: authContext.user.id,
+    description: body?.description,
+    tags: body?.tags,
+    updatedAt: Date.now(),
+  })
+
+  writeJson(response, 200, {
+    ok: true,
+    worldview,
+  }, { headers })
+}
+
+async function handleWorldviewUpdate(request, response, worldviewId) {
+  const headers = appendCorsHeaders(request)
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '修改世界观需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  if (authContext.user.role !== 'admin') {
+    writeJson(response, 403, { message: '只有管理员可以管理世界观。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 64 * 1024)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '世界观内容过大，请删减后再试。'
+      : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const result = renameWorldviewReferences(String(worldviewId ?? '').trim(), body, authContext.user.id)
+
+  if (result.error) {
+    writeJson(response, result.status ?? 400, { message: result.error, ok: false }, { headers })
+    return
+  }
+
+  writeJson(response, 200, {
+    ok: true,
+    previousName: result.previousName,
+    worldview: result.worldview,
+  }, { headers })
+}
+
 function buildAgeChronicleResponseHeaders(request, authContext, headers) {
   return authContext?.shouldRefreshCookie
     ? {
@@ -6485,6 +7073,16 @@ const server = http.createServer((request, response) => {
     return
   }
 
+  if (request.method === 'GET' && requestUrl.pathname === '/api/worldviews') {
+    handleWorldviewsGet(request, response)
+    return
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/worldviews') {
+    void handleWorldviewCreate(request, response)
+    return
+  }
+
   if (request.method === 'GET' && requestUrl.pathname === '/api/age-chronicle/state') {
     handleAgeChronicleStateGet(request, response, requestUrl)
     return
@@ -6551,6 +7149,17 @@ const server = http.createServer((request, response) => {
       request,
       response,
       decodeURIComponent(adminCharacterCardMatch[1]),
+    )
+    return
+  }
+
+  const worldviewMatch = /^\/api\/worldviews\/([^/]+)$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PATCH' && worldviewMatch) {
+    void handleWorldviewUpdate(
+      request,
+      response,
+      decodeURIComponent(worldviewMatch[1]),
     )
     return
   }

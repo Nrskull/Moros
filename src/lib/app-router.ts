@@ -2,11 +2,14 @@ export type AppPage =
   | 'home'
   | 'timeline'
   | 'vertical-timeline'
+  | 'tools-overview'
   | 'age-chronicle'
+  | 'character-sheet'
   | 'log-workbench'
   | 'chat-room'
   | 'event-detail'
   | 'admin-character'
+  | 'admin-worldview'
 
 export interface AppRoute {
   eventId: string
@@ -68,6 +71,22 @@ export function parseAppRoute(url: URL | Location): AppRoute {
     }
   }
 
+  if (pathname === '/tools') {
+    return {
+      eventId: '',
+      page: 'tools-overview',
+      worldviewName: null,
+    }
+  }
+
+  if (pathname === '/tools/character-sheet') {
+    return {
+      eventId: '',
+      page: 'character-sheet',
+      worldviewName: null,
+    }
+  }
+
   if (pathname === '/logs') {
     return {
       eventId: '',
@@ -88,6 +107,14 @@ export function parseAppRoute(url: URL | Location): AppRoute {
     return {
       eventId: '',
       page: 'admin-character',
+      worldviewName: null,
+    }
+  }
+
+  if (pathname === '/admin/worldviews') {
+    return {
+      eventId: '',
+      page: 'admin-worldview',
       worldviewName: null,
     }
   }
@@ -120,14 +147,20 @@ export function buildAppRouteHref(route: {
     pathname = '/vertical-timeline'
   } else if (route.page === 'vertical-timeline') {
     pathname = '/vertical-timeline'
+  } else if (route.page === 'tools-overview') {
+    pathname = '/tools'
   } else if (route.page === 'age-chronicle') {
     pathname = '/chronicle'
+  } else if (route.page === 'character-sheet') {
+    pathname = '/tools/character-sheet'
   } else if (route.page === 'log-workbench') {
     pathname = '/logs'
   } else if (route.page === 'chat-room') {
     pathname = '/chat'
   } else if (route.page === 'admin-character') {
     pathname = '/admin/characters'
+  } else if (route.page === 'admin-worldview') {
+    pathname = '/admin/worldviews'
   } else if (route.page === 'event-detail') {
     const safeEventId = String(route.eventId ?? '').trim()
     pathname = safeEventId === '' ? '/vertical-timeline' : `/events/${encodeURIComponent(safeEventId)}`
@@ -136,7 +169,10 @@ export function buildAppRouteHref(route: {
   const searchParams = new URLSearchParams()
   const worldviewName = decodeWorldviewName(route.worldviewName ?? null)
 
-  if (!['home', 'chat-room', 'admin-character'].includes(route.page) && worldviewName) {
+  if (
+    !['home', 'chat-room', 'admin-character', 'admin-worldview', 'tools-overview', 'character-sheet'].includes(route.page) &&
+    worldviewName
+  ) {
     searchParams.set('worldview', worldviewName)
   }
 

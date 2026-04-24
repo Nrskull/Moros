@@ -108,7 +108,7 @@ code {
 .page-scene.is-home {
   width: 100%;
   margin: 0;
-  padding: 36px 0 64px;
+  padding: 0;
 }
 
 .shell.is-home {
@@ -156,6 +156,8 @@ code {
 
 .page-scene.is-home {
   max-width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .topbar {
@@ -256,7 +258,7 @@ code {
   --nav-icon-size: 22px;
 }
 
-.side-nav-icon-age-chronicle {
+.side-nav-icon-tools-overview {
   --nav-icon-size: 22px;
 }
 
@@ -271,6 +273,10 @@ code {
 
 .side-nav-icon-worldview {
   --nav-icon-size: 21px;
+}
+
+.side-nav-icon-manage {
+  --nav-icon-size: 20px;
 }
 
 .side-nav-icon-more {
@@ -342,7 +348,8 @@ code {
   background: rgba(197, 206, 216, 0.78);
 }
 
-.side-nav-worldview {
+.side-nav-worldview,
+.side-nav-manage {
   position: relative;
 }
 
@@ -351,6 +358,14 @@ code {
   right: auto;
   left: calc(100% + 14px);
   width: min(360px, calc((100vw * var(--app-scale-inverse, 1)) - 112px));
+  transform: translateY(-50%);
+}
+
+.side-nav-manage .side-nav-manage-menu {
+  top: 50%;
+  right: auto;
+  left: calc(100% + 14px);
+  width: min(320px, calc((100vw * var(--app-scale-inverse, 1)) - 112px));
   transform: translateY(-50%);
 }
 
@@ -2765,6 +2780,92 @@ code {
   opacity: 0.42;
 }
 
+.tools-overview {
+  display: grid;
+  gap: 24px;
+}
+
+.tools-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.tool-overview-card {
+  display: grid;
+  gap: 10px;
+  min-height: 180px;
+  padding: 22px;
+  border: 1px solid rgba(223, 228, 234, 0.86);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.tool-overview-card:hover {
+  border-color: var(--accent-border);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 34px rgba(16, 24, 40, 0.08);
+  transform: translateY(-2px);
+}
+
+.tool-overview-kicker {
+  width: fit-content;
+  padding: 0.28rem 0.54rem;
+  border-radius: 999px;
+  background: var(--accent-surface);
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.tool-overview-card strong {
+  color: #1f2833;
+  font-size: 1.2rem;
+  line-height: 1.2;
+}
+
+.tool-overview-card p {
+  max-width: 24rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.tool-placeholder-page {
+  display: grid;
+  gap: 24px;
+}
+
+.tool-placeholder-empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 280px;
+  border: 1px dashed rgba(197, 206, 216, 0.86);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.56);
+  text-align: center;
+}
+
+.tool-placeholder-empty strong {
+  color: #1f2833;
+  font-size: 1.05rem;
+}
+
+.tool-placeholder-empty span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
 .chat-nickname-field input {
   min-height: 46px;
   padding: 0.78rem 0.92rem;
@@ -3250,6 +3351,48 @@ code {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 6px;
+}
+
+.worldview-management-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.worldview-management-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(223, 228, 234, 0.92);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.worldview-management-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.worldview-management-copy strong {
+  color: #1f2833;
+  font-size: 0.96rem;
+  line-height: 1.2;
+}
+
+.worldview-management-copy p,
+.worldview-management-copy span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.worldview-management-form {
+  padding-top: 18px;
+  border-top: 1px solid rgba(223, 228, 234, 0.88);
 }
 
 .age-editor-list {
@@ -5128,6 +5271,10 @@ code {
     /* height: 10px; */
   }
 
+  .tools-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
   .chat-character-sheet-head {
     flex-direction: column;
     align-items: flex-start;
@@ -5334,7 +5481,25 @@ code {
     width: auto;
   }
 
+  .side-nav-manage.worldview-dropdown {
+    order: 3;
+    display: block;
+    width: auto;
+  }
+
   .side-nav-worldview .worldview-dropdown-menu {
+    top: auto;
+    right: auto;
+    bottom: calc(100% + 12px);
+    left: 50%;
+    z-index: 90;
+    width: min(320px, calc(100vw - 24px));
+    max-height: min(70vh, 520px);
+    overflow-y: auto;
+    transform: translateX(-50%);
+  }
+
+  .side-nav-manage .side-nav-manage-menu {
     top: auto;
     right: auto;
     bottom: calc(100% + 12px);
@@ -5348,7 +5513,7 @@ code {
 
   .mobile-more-nav {
     position: relative;
-    order: 3;
+    order: 4;
     display: block;
   }
 

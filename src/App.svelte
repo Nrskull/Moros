@@ -9,13 +9,16 @@
   } from './content/worldviews'
   import AgeChroniclePage from './lib/AgeChroniclePage.svelte'
   import AdminCharacterPage from './lib/AdminCharacterPage.svelte'
+  import CharacterSheetPage from './lib/CharacterSheetPage.svelte'
   import ChatRoomPage from './lib/ChatRoomPage.svelte'
   import EventDetailPage from './lib/EventDetailPage.svelte'
   import HomePage from './lib/HomePage.svelte'
   import LogWorkbenchPage from './lib/LogWorkbenchPage.svelte'
   import TimelineAxis from './lib/TimelineAxis.svelte'
   import TimelineEventCard from './lib/TimelineEventCard.svelte'
+  import ToolsOverviewPage from './lib/ToolsOverviewPage.svelte'
   import VerticalTimelinePage from './lib/VerticalTimelinePage.svelte'
+  import WorldviewAdminPage from './lib/WorldviewAdminPage.svelte'
   import WorldviewHero from './lib/WorldviewHero.svelte'
   import { mockEvents } from './lib/mock-events'
   import { seaFogIn, seaFogOut } from './lib/transitions'
@@ -45,10 +48,10 @@
   } from './lib/worldview-themes'
 
   type ZoomDensityMode = 'overview' | 'compact' | 'detail'
-  type DrawerMode = 'none' | 'event' | 'worldview'
+  type DrawerMode = 'none' | 'event' | 'manage'
   type EventEditorMode = 'create' | 'edit'
   type EventDragMode = 'move' | 'resize-end'
-  type NavigationItemId = 'age-chronicle' | 'chat-room' | 'home' | 'log-workbench' | 'vertical-timeline'
+  type NavigationItemId = 'chat-room' | 'home' | 'log-workbench' | 'tools-overview' | 'vertical-timeline'
   type TimelineMode = 'view' | 'edit'
   type TagFilterMode = 'highlight' | 'hide'
 
@@ -79,6 +82,21 @@
     currentUser?: ChatUser
     message?: string
     ok: boolean
+  }
+
+  interface ManagedWorldview extends WorldviewContent {
+    createdAt: number
+    createdByUserId: string | null
+    id: string
+    updatedAt: number
+  }
+
+  interface WorldviewListResponse {
+    message?: string
+    ok: boolean
+    previousName?: string
+    worldview?: ManagedWorldview | null
+    worldviews?: ManagedWorldview[]
   }
 
   interface NavigationItem {
@@ -131,7 +149,7 @@
   const navigationItems: NavigationItem[] = [
     { icon: '/home.svg', id: 'home', label: '首页', page: 'home' },
     { icon: '/timeline.svg', id: 'vertical-timeline', label: '时间线', page: 'vertical-timeline' },
-    { icon: '/plugs.svg', id: 'age-chronicle', label: '年龄工具', page: 'age-chronicle' },
+    { icon: '/plugs.svg', id: 'tools-overview', label: '工具总览', page: 'tools-overview' },
     { icon: '/log.svg', id: 'log-workbench', label: '日志展示', page: 'log-workbench' },
     { icon: '/chat.svg', id: 'chat-room', label: '群聊', page: 'chat-room' },
   ]
@@ -283,14 +301,16 @@
 
   let timelineScrollElement: HTMLDivElement | null = null
   let timelineSurfaceElement: HTMLDivElement | null = null
+  let manageMenuElement: HTMLDivElement | null = null
   let mobileMoreNavElement: HTMLDivElement | null = null
   let worldviewMenuElement: HTMLDivElement | null = null
   let tagFilterContainerElement: HTMLDivElement | null = null
 
   let timelineTracks: TimelineTrack[] = initialTimelineState.tracks
   let timelineEvents: EditableTimelineEvent[] = initialTimelineState.events
-  let customWorldviews: WorldviewContent[] = []
+  let managedWorldviews: ManagedWorldview[] = []
   let selectedWorldview = timelineEvents[0]?.worldview ?? ''
+  let isManageMenuOpen = false
   let isMobileMoreNavOpen = false
   let isWorldviewMenuOpen = false
   let isTagFilterOpen = false
@@ -333,10 +353,6 @@
   let draftSummary = ''
   let draftBody = ''
   let draftTagsText = ''
-  let draftWorldviewName = ''
-  let draftWorldviewDescription = ''
-  let draftWorldviewTagsText = ''
-  let draftWorldviewCoverImage = ''
 
   let eventDragId = ''
   let eventDragMode: EventDragMode = 'move'
@@ -414,10 +430,6 @@
       .filter(Boolean)
   }
 
-  function formatTags(tags: string[]): string {
-    return tags.join('，')
-  }
-
   function deriveSummary(summary: string, body: string, title: string): string {
     const trimmedSummary = summary.trim()
     if (trimmedSummary !== '') {
@@ -447,7 +459,32 @@
   }
 
   function toggleWorldviewMenu(): void {
+    isManageMenuOpen = false
+    isMobileMoreNavOpen = false
     isWorldviewMenuOpen = !isWorldviewMenuOpen
+  }
+
+  function isCompactViewport(): boolean {
+    return typeof window !== 'undefined' && window.matchMedia('(max-width: 960px)').matches
+  }
+
+  function toggleManageMenu(): void {
+    isWorldviewMenuOpen = false
+    isMobileMoreNavOpen = false
+    isManageMenuOpen = !isManageMenuOpen
+  }
+
+  function openManagePanel(): void {
+    if (isCompactViewport()) {
+      isManageMenuOpen = false
+      isWorldviewMenuOpen = false
+      isMobileMoreNavOpen = false
+      drawerMode = 'manage'
+      editingEventId = ''
+      return
+    }
+
+    toggleManageMenu()
   }
 
   function toggleTagFilterPanel(): void {
@@ -551,13 +588,6 @@
     draftTagsText = '#待整理'
   }
 
-  function resetWorldviewDraft(): void {
-    draftWorldviewName = ''
-    draftWorldviewDescription = ''
-    draftWorldviewTagsText = '#世界观'
-    draftWorldviewCoverImage = ''
-  }
-
   function openCreateEvent(): void {
     eventEditorMode = 'create'
     editingEventId = ''
@@ -565,48 +595,17 @@
     drawerMode = 'event'
   }
 
-  function openCreateWorldview(): void {
-    resetWorldviewDraft()
+  function openWorldviewManager(): void {
     isWorldviewMenuOpen = false
-    drawerMode = 'worldview'
+    isManageMenuOpen = false
+    drawerMode = 'none'
     editingEventId = ''
+    navigateToPage('admin-worldview')
   }
 
   function closeDrawer(): void {
     drawerMode = 'none'
     editingEventId = ''
-  }
-
-  async function saveWorldviewDraft(): Promise<void> {
-    const name = draftWorldviewName.trim()
-    const description = draftWorldviewDescription.trim()
-    const tags = serialiseTags(draftWorldviewTagsText)
-    const coverImage = draftWorldviewCoverImage.trim()
-
-    if (name === '') {
-      return
-    }
-
-    if (worldviewOptions.includes(name)) {
-      if (typeof window !== 'undefined') {
-        await alertDialog(`世界观“${name}”已经存在。`)
-      }
-      return
-    }
-
-    customWorldviews = [
-      ...customWorldviews,
-      {
-        name,
-        description: description || '这是一个新建世界观，简介尚待补充。',
-        coverImage,
-        tags,
-      },
-    ]
-    selectedWorldview = name
-    routeWorldviewName = name
-    closeDrawer()
-    replaceRouteFromState()
   }
 
   function saveDraftEvent(): void {
@@ -692,6 +691,14 @@
       return
     }
 
+    if (isManageMenuOpen || isWorldviewMenuOpen || isMobileMoreNavOpen || isTagFilterOpen) {
+      isManageMenuOpen = false
+      isWorldviewMenuOpen = false
+      isMobileMoreNavOpen = false
+      isTagFilterOpen = false
+      return
+    }
+
     if (activePage === 'event-detail') {
       closeEventDetail()
       return
@@ -710,6 +717,10 @@
 
     if (isWorldviewMenuOpen && worldviewMenuElement && !worldviewMenuElement.contains(target)) {
       isWorldviewMenuOpen = false
+    }
+
+    if (isManageMenuOpen && manageMenuElement && !manageMenuElement.contains(target)) {
+      isManageMenuOpen = false
     }
 
     if (isTagFilterOpen && tagFilterContainerElement && !tagFilterContainerElement.contains(target)) {
@@ -751,6 +762,93 @@
     }
   }
 
+  async function requestWorldviewApi(pathname: string, init?: RequestInit): Promise<WorldviewListResponse> {
+    const headers = new Headers(init?.headers ?? {})
+
+    if (init?.body && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
+
+    const response = await fetch(buildChatHttpUrl(pathname), {
+      ...init,
+      credentials: 'include',
+      headers,
+    })
+
+    let payload: WorldviewListResponse = { ok: response.ok }
+
+    try {
+      payload = (await response.json()) as WorldviewListResponse
+    } catch {
+      payload = {
+        message: '世界观服务返回了无法解析的响应。',
+        ok: false,
+      }
+    }
+
+    return {
+      ...payload,
+      ok: response.ok && payload.ok !== false,
+    }
+  }
+
+  async function loadManagedWorldviews(): Promise<void> {
+    try {
+      const payload = await requestWorldviewApi('/worldviews', { method: 'GET' })
+
+      if (!payload.ok) {
+        return
+      }
+
+      managedWorldviews = [...(payload.worldviews ?? [])]
+    } catch {}
+  }
+
+  async function handleWorldviewSaved(payload: WorldviewListResponse): Promise<void> {
+    if (!payload.worldview) {
+      await loadManagedWorldviews()
+      return
+    }
+
+    const savedWorldview = payload.worldview
+    const previousName = payload.previousName ?? ''
+    const existedBeforeSave = managedWorldviews.some((entry) => entry.id === savedWorldview.id)
+
+    managedWorldviews = existedBeforeSave
+      ? managedWorldviews.map((entry) => (entry.id === savedWorldview.id ? savedWorldview : entry))
+      : [savedWorldview, ...managedWorldviews]
+    managedWorldviews = [...managedWorldviews].sort((left, right) =>
+      right.updatedAt - left.updatedAt || left.name.localeCompare(right.name, 'zh-CN'))
+
+    if (previousName !== '' && previousName !== savedWorldview.name) {
+      timelineEvents = timelineEvents.map((event) =>
+        event.worldview === previousName
+          ? {
+              ...event,
+              worldview: savedWorldview.name,
+            }
+          : event,
+      )
+
+      if (selectedWorldview === previousName) {
+        selectedWorldview = savedWorldview.name
+      }
+
+      if (routeWorldviewName === previousName) {
+        routeWorldviewName = savedWorldview.name
+      }
+
+      if (draftWorldview === previousName) {
+        draftWorldview = savedWorldview.name
+      }
+    } else if (!existedBeforeSave) {
+      selectedWorldview = savedWorldview.name
+      routeWorldviewName = savedWorldview.name
+    }
+
+    await loadManagedWorldviews()
+  }
+
   async function restoreGlobalChatAuth(): Promise<void> {
     isChatAuthChecking = true
 
@@ -771,6 +869,7 @@
 
   function toggleMobileMoreNav(): void {
     isMobileMoreNavOpen = !isMobileMoreNavOpen
+    isManageMenuOpen = false
     isWorldviewMenuOpen = false
   }
 
@@ -779,13 +878,21 @@
     isChatAuthChecking = false
   }
 
+  function getManagedWorldview(name: string): ManagedWorldview | undefined {
+    return managedWorldviews.find((entry) => entry.name === name)
+  }
+
   function getNavigationActiveId(page: AppPage): NavigationItemId {
     if (page === 'event-detail') {
       return 'vertical-timeline'
     }
 
-    if (page === 'admin-character') {
+    if (page === 'admin-character' || page === 'admin-worldview') {
       return 'chat-room'
+    }
+
+    if (page === 'age-chronicle' || page === 'character-sheet') {
+      return 'tools-overview'
     }
 
     if (page === 'timeline') {
@@ -795,7 +902,7 @@
     if (
       page === 'home' ||
       page === 'vertical-timeline' ||
-      page === 'age-chronicle' ||
+      page === 'tools-overview' ||
       page === 'log-workbench' ||
       page === 'chat-room'
     ) {
@@ -810,7 +917,12 @@
       return
     }
 
+    isManageMenuOpen = false
     isMobileMoreNavOpen = false
+    isWorldviewMenuOpen = false
+    if (drawerMode === 'manage') {
+      closeDrawer()
+    }
     isChatLogoutPending = true
 
     try {
@@ -833,12 +945,25 @@
   }
 
   function resolveWorldviewContent(name: string): WorldviewContent {
-    return customWorldviews.find((entry) => entry.name === name) ?? getWorldviewContent(name)
+    const storedWorldview = getManagedWorldview(name)
+    const fallback = getWorldviewContent(name)
+
+    if (!storedWorldview) {
+      return fallback
+    }
+
+    return {
+      ...fallback,
+      coverImage: storedWorldview.coverImage || fallback.coverImage,
+      description: storedWorldview.description || fallback.description,
+      name: storedWorldview.name,
+      tags: storedWorldview.tags.length > 0 ? storedWorldview.tags : fallback.tags,
+    }
   }
 
   function resolveWorldviewTheme(name: string): WorldviewTheme {
     const baseTheme = getWorldviewTheme(name)
-    const customWorldview = customWorldviews.find((entry) => entry.name === name)
+    const customWorldview = getManagedWorldview(name)
 
     if (!customWorldview) {
       return baseTheme
@@ -858,8 +983,14 @@
     return page === 'timeline' ? 'vertical-timeline' : page
   }
 
+  function pageUsesWorldview(page: AppPage): boolean {
+    return !['home', 'chat-room', 'admin-character', 'admin-worldview', 'tools-overview', 'character-sheet'].includes(
+      normaliseVisiblePage(page),
+    )
+  }
+
   function getRouteWorldviewName(targetPage: AppPage = activePage): string | null {
-    if (['home', 'chat-room'].includes(normaliseVisiblePage(targetPage))) {
+    if (!pageUsesWorldview(targetPage)) {
       return null
     }
 
@@ -946,6 +1077,7 @@
   function navigateToPage(page: AppPage, options?: { replace?: boolean }): void {
     const nextPage = normaliseVisiblePage(page)
     activePage = nextPage
+    isManageMenuOpen = false
     isMobileMoreNavOpen = false
     isWorldviewMenuOpen = false
 
@@ -988,7 +1120,9 @@
     })
   }
 
-  $: configuredWorldviewNames = [...worldviewContents, ...customWorldviews].map((entry) => entry.name)
+  $: configuredWorldviewNames = managedWorldviews.length > 0
+    ? managedWorldviews.map((entry) => entry.name)
+    : worldviewContents.map((entry) => entry.name)
   $: worldviewOptions = [
     ...new Set([...configuredWorldviewNames, ...timelineEvents.map((event) => event.worldview)].filter(Boolean)),
   ]
@@ -1091,6 +1225,14 @@
       id: item.id,
       label: item.label,
     })),
+    ...(chatAuthUser?.role === 'admin'
+      ? [{
+          action: openManagePanel,
+          icon: '/manage.svg',
+          id: 'manage',
+          label: '管理',
+        }]
+      : []),
     {
       action: handleChatLogout,
       disabled: !chatAuthUser || isChatAuthChecking || isChatLogoutPending,
@@ -1148,7 +1290,7 @@
   }
   $: if (
     hasMountedRouter &&
-    !['home', 'chat-room'].includes(activePage) &&
+    pageUsesWorldview(activePage) &&
     worldviewOptions.length > 0 &&
     routeWorldviewName !== selectedWorldview
   ) {
@@ -1562,6 +1704,7 @@
   onMount(() => {
     syncRouteWithLocation(true)
     hasMountedRouter = true
+    void loadManagedWorldviews()
     void restoreGlobalChatAuth()
   })
 </script>
@@ -1643,19 +1786,19 @@
         aria-label="切换世界观"
         class="side-nav-button side-nav-button-worldview"
         data-nav-id="worldview"
-        disabled={['home', 'chat-room'].includes(activePage)}
-        title={['home', 'chat-room'].includes(activePage) ? '当前页面不需要切换世界观' : '切换世界观'}
+        disabled={!pageUsesWorldview(activePage)}
+        title={pageUsesWorldview(activePage) ? '切换世界观' : '当前页面不需要切换世界观'}
         type="button"
         onclick={toggleWorldviewMenu}
       >
         <img alt="" aria-hidden="true" class="side-nav-icon side-nav-icon-worldview" src="/switch.svg" />
       </button>
 
-      {#if isWorldviewMenuOpen && !['home', 'chat-room'].includes(activePage)}
+      {#if isWorldviewMenuOpen && pageUsesWorldview(activePage)}
         <div
           class="worldview-dropdown-menu side-nav-worldview-menu"
-          in:seaFogIn={{ delay: 0, duration: 220 }}
-          out:seaFogOut={{ duration: 180 }}
+          in:fade={{ delay: 0, duration: 160 }}
+          out:fade={{ duration: 120 }}
         >
           {#each worldviewOptions as worldview}
             {@const worldviewContent = resolveWorldviewContent(worldview)}
@@ -1669,14 +1812,44 @@
               <span>{worldviewContent.description}</span>
             </button>
           {/each}
-
-          <div class="worldview-dropdown-divider" aria-hidden="true"></div>
-          <button class="worldview-dropdown-create" type="button" onclick={openCreateWorldview}>
-            + 新增世界观
-          </button>
         </div>
       {/if}
     </div>
+
+    {#if chatAuthUser?.role === 'admin'}
+      <div class="side-nav-separator" aria-hidden="true"></div>
+
+      <div bind:this={manageMenuElement} class="side-nav-manage worldview-dropdown">
+        <button
+          aria-expanded={isManageMenuOpen}
+          aria-label="管理入口"
+          class="side-nav-button side-nav-button-manage"
+          data-nav-id="manage"
+          title="管理"
+          type="button"
+          onclick={openManagePanel}
+        >
+          <img alt="" aria-hidden="true" class="side-nav-icon side-nav-icon-manage" src="/manage.svg" />
+        </button>
+
+        {#if isManageMenuOpen}
+          <div
+            class="worldview-dropdown-menu side-nav-manage-menu"
+            in:fade={{ delay: 0, duration: 160 }}
+            out:fade={{ duration: 120 }}
+          >
+            <button class="worldview-dropdown-item" type="button" onclick={() => navigateToPage('admin-character')}>
+              <strong>角色后台</strong>
+              <span>统一进入角色卡后台，不再从群聊侧栏分散进入。</span>
+            </button>
+            <button class="worldview-dropdown-item" type="button" onclick={openWorldviewManager}>
+              <strong>世界观管理</strong>
+              <span>新建世界观，或对已有世界观执行重命名与元数据维护。</span>
+            </button>
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     <div class="side-nav-separator" aria-hidden="true"></div>
 
@@ -2062,6 +2235,11 @@
         worldviewThemeStyle={themeStyle}
         worldviewTransitionKey={activeWorldviewName}
       />
+    {:else if activePage === 'tools-overview'}
+      <ToolsOverviewPage
+        onOpenAgeChronicle={() => navigateToPage('age-chronicle')}
+        onOpenCharacterSheet={() => navigateToPage('character-sheet')}
+      />
     {:else if activePage === 'age-chronicle'}
       <AgeChroniclePage
         worldviewDescription={activeWorldviewContent.description}
@@ -2071,6 +2249,8 @@
         worldviewThemeStyle={themeStyle}
         worldviewTransitionKey={activeWorldviewName}
       />
+    {:else if activePage === 'character-sheet'}
+      <CharacterSheetPage onBack={() => navigateToPage('tools-overview')} />
     {:else if activePage === 'log-workbench'}
       <LogWorkbenchPage
         initialWorldviewName={activeWorldviewName}
@@ -2084,12 +2264,18 @@
       />
     {:else if activePage === 'admin-character'}
       <AdminCharacterPage worldviewOptions={worldviewOptions} />
+    {:else if activePage === 'admin-worldview'}
+      <WorldviewAdminPage
+        managedWorldviews={managedWorldviews}
+        onRefresh={loadManagedWorldviews}
+        onSaved={handleWorldviewSaved}
+      />
     {:else if activePage === 'chat-room'}
       <ChatRoomPage
         authResetKey={chatLogoutSerial}
         mobileMenuItems={chatMobileMenuItems}
         onAuthStateChange={handleChatAuthStateChange}
-        onOpenAdminCharacterPage={() => navigateToPage('admin-character')}
+        worldviewOptions={worldviewOptions}
       />
     {:else}
       <EventDetailPage
@@ -2104,7 +2290,7 @@
     {/key}
   </div>
 
-  {#if drawerMode === 'worldview'}
+  {#if drawerMode === 'manage'}
     <div class="drawer-backdrop">
       <button
         class="drawer-dismiss"
@@ -2112,62 +2298,36 @@
         aria-label="关闭抽屉"
         onclick={closeDrawer}
       ></button>
-      <aside class="drawer-panel" aria-label="新增世界观抽屉">
+      <aside class="drawer-panel" aria-label="管理入口抽屉">
         <div class="drawer-header">
           <div>
-            <p class="section-label">世界观管理</p>
-            <h3>新增世界观</h3>
+            <p class="section-label">管理入口</p>
+            <h3>后台功能</h3>
           </div>
           <button class="toolbar-action" type="button" onclick={closeDrawer}>关闭</button>
         </div>
 
         <div class="drawer-body">
-          <form
-            class="drawer-form"
-            onsubmit={(event) => {
-              event.preventDefault()
-              saveWorldviewDraft()
-            }}
-          >
-            <label class="drawer-field">
-              <span>世界观名称</span>
-              <input bind:value={draftWorldviewName} maxlength="40" type="text" />
-            </label>
-
-            <label class="drawer-field">
-              <span>简介</span>
-              <textarea bind:value={draftWorldviewDescription} rows="4"></textarea>
-            </label>
-
-            <label class="drawer-field">
-              <span>标签</span>
-              <textarea
-                bind:value={draftWorldviewTagsText}
-                placeholder="#主线，#地点，#主题"
-                rows="3"
-              ></textarea>
-            </label>
-
-            <label class="drawer-field">
-              <span>配图地址</span>
-              <input
-                bind:value={draftWorldviewCoverImage}
-                placeholder="/background.jpg"
-                type="text"
-              />
-            </label>
-
-            <p class="drawer-hint">新增后会立即出现在顶部世界观下拉菜单，并同步用于时间轴与年龄编年页面。</p>
-
-            <div class="drawer-footer">
-              <button class="toolbar-action" type="button" onclick={closeDrawer}>
-                取消
-              </button>
-              <button class="toolbar-action toolbar-primary" type="submit">保存世界观</button>
-            </div>
-          </form>
+          <div class="drawer-form">
+            <button
+              class="worldview-dropdown-item"
+              type="button"
+              onclick={() => {
+                closeDrawer()
+                navigateToPage('admin-character')
+              }}
+            >
+              <strong>角色后台</strong>
+              <span>查看、筛选和维护全部角色卡。</span>
+            </button>
+            <button class="worldview-dropdown-item" type="button" onclick={openWorldviewManager}>
+              <strong>世界观管理</strong>
+              <span>新建世界观，或重命名已有世界观并同步数据库引用。</span>
+            </button>
+          </div>
         </div>
       </aside>
     </div>
   {/if}
+
 </main>

@@ -150,7 +150,7 @@
   export let authResetKey = 0
   export let mobileMenuItems: ChatMobileMenuItem[] = []
   export let onAuthStateChange: ((currentUser: ChatUser | null) => void) | undefined = undefined
-  export let onOpenAdminCharacterPage: (() => void) | undefined = undefined
+  export let worldviewOptions: string[] = []
 
   const ROOM_PLACEHOLDER: ChatRoom = {
     createdAt: 0,
@@ -174,7 +174,7 @@
 
   const AVATAR_CROP_VIEWPORT_SIZE = 220
   const AVATAR_CROP_OUTPUT_SIZE = 320
-  const DEFAULT_CHARACTER_WORLDVIEW = worldviewContents[0]?.name ?? ''
+  const STATIC_DEFAULT_CHARACTER_WORLDVIEW = worldviewContents[0]?.name ?? ''
   const DEFAULT_CHARACTER_COLOR = '#64748b'
 
   let characterMenuElement: HTMLDivElement | null = null
@@ -200,6 +200,8 @@
   let isAuthChecking = true
   let currentUser: ChatUser | null = null
   let isAdminUser = false
+  let availableCharacterWorldviews: string[] = []
+  let defaultCharacterWorldview = STATIC_DEFAULT_CHARACTER_WORLDVIEW
   let characterCards: ChatCharacterCard[] = []
   let activeCharacterId: string | null = null
   let messages: ChatMessage[] = []
@@ -220,7 +222,7 @@
   let roomPermissionsError = ''
   let isCreateCharacterPromptOpen = false
   let createCharacterNameDraft = ''
-  let createCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+  let createCharacterWorldviewDraft = STATIC_DEFAULT_CHARACTER_WORLDVIEW
   let createCharacterColorDraft = DEFAULT_CHARACTER_COLOR
   let createCharacterError = ''
   let createCharacterAttributesDraft: ChatCharacterAttributes = createEmptyCharacterAttributes()
@@ -229,7 +231,7 @@
   let isEditCharacterPromptOpen = false
   let editCharacterId = ''
   let editCharacterNameDraft = ''
-  let editCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+  let editCharacterWorldviewDraft = STATIC_DEFAULT_CHARACTER_WORLDVIEW
   let editCharacterColorDraft = DEFAULT_CHARACTER_COLOR
   let editCharacterError = ''
   let editCharacterAttributesDraft: ChatCharacterAttributes = createEmptyCharacterAttributes()
@@ -351,6 +353,20 @@
   }
 
   $: isAdminUser = currentUser?.role === 'admin'
+  $: availableCharacterWorldviews = [
+    ...new Set(
+      (worldviewOptions.length > 0 ? worldviewOptions : worldviewContents.map((worldview) => worldview.name))
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ]
+  $: defaultCharacterWorldview = availableCharacterWorldviews[0] ?? STATIC_DEFAULT_CHARACTER_WORLDVIEW
+  $: if (createCharacterWorldviewDraft !== '' && !availableCharacterWorldviews.includes(createCharacterWorldviewDraft)) {
+    createCharacterWorldviewDraft = defaultCharacterWorldview
+  }
+  $: if (editCharacterWorldviewDraft !== '' && !availableCharacterWorldviews.includes(editCharacterWorldviewDraft)) {
+    editCharacterWorldviewDraft = defaultCharacterWorldview
+  }
 
   function getAllowedUserIdsForRoom(roomId: string, entries: ChatRoomPermission[] = roomPermissions): string[] {
     return entries.find((entry) => entry.roomId === roomId)?.userIds ?? []
@@ -474,9 +490,9 @@
     closeCharacterEditorOnNextState = false
     createCharacterError = ''
     editCharacterError = ''
-    createCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+    createCharacterWorldviewDraft = defaultCharacterWorldview
     createCharacterColorDraft = DEFAULT_CHARACTER_COLOR
-    editCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+    editCharacterWorldviewDraft = defaultCharacterWorldview
     editCharacterColorDraft = DEFAULT_CHARACTER_COLOR
     clearCreateCharacterAvatar()
     clearEditCharacterAvatar()
@@ -1732,7 +1748,7 @@
     closeCharacterEditorOnNextState = false
     clearCreateCharacterAvatar()
     createCharacterNameDraft = ''
-    createCharacterWorldviewDraft = DEFAULT_CHARACTER_WORLDVIEW
+    createCharacterWorldviewDraft = defaultCharacterWorldview
     createCharacterColorDraft = DEFAULT_CHARACTER_COLOR
     createCharacterAttributesDraft = createEmptyCharacterAttributes()
     createCharacterError = ''
@@ -1747,7 +1763,7 @@
     clearEditCharacterAvatar()
     editCharacterId = character.id
     editCharacterNameDraft = character.name
-    editCharacterWorldviewDraft = character.worldview || DEFAULT_CHARACTER_WORLDVIEW
+    editCharacterWorldviewDraft = character.worldview || defaultCharacterWorldview
     editCharacterColorDraft = character.color || DEFAULT_CHARACTER_COLOR
     editCharacterAttributesDraft = cloneCharacterAttributes(character.attributes)
     editCharacterAvatarDataUrl = character.avatarDataUrl ?? ''
@@ -1789,7 +1805,7 @@
   }
 
   function handleComposerKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'Enter' || event.shiftKey) {
+    if (event.isComposing || event.key !== 'Enter' || event.shiftKey) {
       return
     }
 
@@ -2136,15 +2152,6 @@
           </div>
           <div class="chat-panel-head-actions">
             <span>{roomList.length} 个房间</span>
-              {#if isAdminUser && onOpenAdminCharacterPage}
-                <button
-                  class="toolbar-action"
-                  type="button"
-                  onclick={() => onOpenAdminCharacterPage?.()}
-                >
-                  角色后台
-                </button>
-              {/if}
             <button
               class="toolbar-action"
               disabled={connectionState !== 'connected'}
@@ -2235,8 +2242,8 @@
                     oninput={handleCharacterWorldviewInput}
                     value={isCreateCharacterPromptOpen ? createCharacterWorldviewDraft : editCharacterWorldviewDraft}
                   >
-                    {#each worldviewContents as worldview}
-                      <option value={worldview.name}>{worldview.name}</option>
+                    {#each availableCharacterWorldviews as worldview}
+                      <option value={worldview}>{worldview}</option>
                     {/each}
                   </select>
                 </label>
