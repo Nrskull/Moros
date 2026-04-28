@@ -244,7 +244,7 @@
                         class={`mx-auto h-10 w-full min-w-0 rounded-xl border px-3 text-center text-sm font-medium transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md ${
                           activeEventId === bubble.id ? 'shadow-sm' : ''
                         }`}
-                        style={`font-family: var(--font-display); color: var(--lane-color); background-color: var(--lane-color-soft); border-color: ${activeEventId === bubble.id ? 'var(--lane-color)' : 'var(--lane-color-strong)'};`}
+                        style={`font-family: var(--font-body); color: var(--lane-color); background-color: var(--lane-color-soft); border-color: ${activeEventId === bubble.id ? 'var(--lane-color)' : 'var(--lane-color-strong)'};`}
                         type="button"
                         onclick={() => handleEventSelect(bubble.id, year.id, lane.id)}
                       >
@@ -338,7 +338,7 @@
                                 class={`mx-auto h-10 w-full min-w-0 rounded-xl border px-3 text-center text-sm font-medium transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md ${
                                   activeEventId === bubble.id ? 'shadow-sm' : ''
                                 }`}
-                                style={`font-family: var(--font-display); color: var(--lane-color); background-color: var(--lane-color-soft); border-color: ${activeEventId === bubble.id ? 'var(--lane-color)' : 'var(--lane-color-strong)'};`}
+                                style={`font-family: var(--font-body); color: var(--lane-color); background-color: var(--lane-color-soft); border-color: ${activeEventId === bubble.id ? 'var(--lane-color)' : 'var(--lane-color-strong)'};`}
                                 type="button"
                                 onclick={() => handleEventSelect(bubble.id, month.id, lane.id)}
                               >
@@ -400,7 +400,7 @@
                                       class={`mx-auto h-10 w-full min-w-0 rounded-xl border px-3 text-center text-sm font-medium transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md ${
                                         activeEventId === bubble.id ? 'shadow-sm' : ''
                                       }`}
-                                      style={`font-family: var(--font-display); color: var(--lane-color); background-color: var(--lane-color-soft); border-color: ${activeEventId === bubble.id ? 'var(--lane-color)' : 'var(--lane-color-strong)'};`}
+                                      style={`font-family: var(--font-body); color: var(--lane-color); background-color: var(--lane-color-soft); border-color: ${activeEventId === bubble.id ? 'var(--lane-color)' : 'var(--lane-color-strong)'};`}
                                       type="button"
                                       onclick={() => handleEventSelect(bubble.id, day.id, lane.id)}
                                     >

@@ -8,6 +8,7 @@
   import { createVerticalTimelineSampleState } from './vertical-timeline-sample'
   import {
     cloneVerticalTimelineState,
+    createVerticalTimelineLaneStyle,
     createVerticalTimelineNodeOptionLabel,
     flattenVerticalTimelineNodes,
     getVerticalTimelineBubbleAtNode,
@@ -21,6 +22,70 @@
     type VerticalTimelineState,
     type VerticalTimelineYearNode,
   } from './vertical-timeline'
+
+const STORAGE_KEY = 'vertical-timeline-lane-config'
+
+interface VerticalTimelineLaneConfig {
+  hiddenLaneIds: string[]
+  laneOrderIds: string[]
+}
+
+function loadLaneConfigFromStorage(worldview: string): VerticalTimelineLaneConfig | null {
+  try {
+    const stored = localStorage.getItem(`${STORAGE_KEY}:${worldview}`)
+
+    if (!stored) {
+      return null
+    }
+
+    const parsed = JSON.parse(stored) as Partial<VerticalTimelineLaneConfig>
+
+    return {
+      hiddenLaneIds: Array.isArray(parsed.hiddenLaneIds)
+        ? parsed.hiddenLaneIds.filter((laneId): laneId is string => typeof laneId === 'string')
+        : [],
+      laneOrderIds: Array.isArray(parsed.laneOrderIds)
+        ? parsed.laneOrderIds.filter((laneId): laneId is string => typeof laneId === 'string')
+        : [],
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  return null
+}
+
+function saveLaneConfigToStorage(worldview: string, hidden: string[], order: string[]): void {
+  try {
+    localStorage.setItem(
+      `${STORAGE_KEY}:${worldview}`,
+      JSON.stringify({ hiddenLaneIds: hidden, laneOrderIds: order }),
+    )
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function normaliseLaneConfigForLanes(
+  config: VerticalTimelineLaneConfig | null,
+  nextLanes: VerticalTimelineLane[],
+): VerticalTimelineLaneConfig {
+  const laneIds = nextLanes.map((lane) => lane.id)
+  const laneIdSet = new Set(laneIds)
+  const sourceHiddenLaneIds = config?.hiddenLaneIds ?? []
+  const sourceLaneOrderIds = config?.laneOrderIds ?? []
+
+  const nextHiddenLaneIds = sourceHiddenLaneIds.filter((laneId) => laneIdSet.has(laneId))
+  const nextLaneOrderIds = [
+    ...sourceLaneOrderIds.filter((laneId) => laneIdSet.has(laneId)),
+    ...laneIds.filter((laneId) => !sourceLaneOrderIds.includes(laneId)),
+  ]
+
+  return {
+    hiddenLaneIds: nextHiddenLaneIds,
+    laneOrderIds: nextLaneOrderIds,
+  }
+}
 
   export let worldviewDescription = ''
   export let worldviewHasCover = true
@@ -98,6 +163,10 @@
   let lanes: VerticalTimelineLane[] = []
   let years: VerticalTimelineYearNode[] = []
   let events: VerticalTimelineEventRecord[] = []
+  let hiddenLaneIds: string[] = []
+  let laneOrderIds: string[] = []
+  let hydratedLaneConfigWorldview = ''
+  let draggingLaneId = ''
 
   let selectedNodeId = ''
   let selectedLaneId = ''
@@ -127,19 +196,27 @@
   $: nodeOptions = flattenVerticalTimelineNodes(years)
   $: eventsById = Object.fromEntries(events.map((event) => [event.id, event]))
   $: detailEvent = detailEventId === '' ? null : (eventsById[detailEventId] ?? null)
+  $: orderedLanes = createOrderedLanes(lanes, laneOrderIds)
+  $: hiddenLaneIdSet = new Set(hiddenLaneIds)
+  $: visibleLanes = orderedLanes.filter((lane) => !hiddenLaneIdSet.has(lane.id))
+  $: visibleLaneIdSet = new Set(visibleLanes.map((lane) => lane.id))
+  $: visibleEvents = events.filter((event) => visibleLaneIdSet.has(event.laneId))
   $: selectedNode = nodeOptions.find((node) => node.id === selectedNodeId) ?? null
   $: selectedLane = lanes.find((lane) => lane.id === selectedLaneId) ?? null
   $: editableEvent = editingEventId === '' ? null : (eventsById[editingEventId] ?? null)
   $: dialogNode = dialogTargetId === '' ? null : (nodeOptions.find((node) => node.id === dialogTargetId) ?? null)
   $: dialogLane = dialogTargetId === '' ? null : (lanes.find((lane) => lane.id === dialogTargetId) ?? null)
   $: dialogEvent = dialogTargetId === '' ? null : (eventsById[dialogTargetId] ?? null)
-  $: manageableLanes = lanes.filter((lane) => permissions.manageableLaneIds.includes(lane.id))
+  $: manageableLanes = orderedLanes.filter((lane) => permissions.manageableLaneIds.includes(lane.id))
   $: monthParentOptions = nodeOptions.filter((node) => node.kind === 'year')
   $: dayParentOptions = nodeOptions.filter((node) => node.kind === 'month')
   $: selectedLanePermissionUserIds =
     lanePermissionEditorId === ''
       ? []
       : lanePermissions.find((entry) => entry.laneId === lanePermissionEditorId)?.userIds ?? []
+  $: visibleManageableLanes = visibleLanes.filter((lane) =>
+    permissions.manageableLaneIds.includes(lane.id),
+  )
   $: canEditSelectedNode = selectedNodeId !== '' && permissions.editableNodeIds.includes(selectedNodeId)
   $: canDeleteSelectedNode = selectedNodeId !== '' && currentUser?.role === 'admin'
   $: canEditSelectedEvent =
@@ -148,7 +225,11 @@
     capabilities.canCreateEvent &&
     selectedNodeId !== '' &&
     selectedLaneId !== '' &&
-    permissions.manageableLaneIds.includes(selectedLaneId)
+    permissions.manageableLaneIds.includes(selectedLaneId) &&
+    visibleLaneIdSet.has(selectedLaneId)
+  $: selectedLaneLabel = selectedLane
+    ? `${selectedLane.name}${hiddenLaneIdSet.has(selectedLane.id) ? '（已隐藏）' : ''}`
+    : '未选择'
   $: expansionResetKey = `${loadedWorldviewName}:${currentUser?.id ?? 'guest'}`
   $: viewerCapabilityLabel = capabilities.canManageLanes
     ? '管理员权限已启用'
@@ -159,9 +240,36 @@
     detailEventId = ''
   }
 
+$: if (loadedWorldviewName !== '' && lanes.length > 0) {
+  const normalisedConfig = normaliseLaneConfigForLanes(
+    { hiddenLaneIds, laneOrderIds },
+    lanes,
+  )
+
+  if (normalisedConfig.hiddenLaneIds.length !== hiddenLaneIds.length) {
+    hiddenLaneIds = normalisedConfig.hiddenLaneIds
+  }
+
+  if (
+    normalisedConfig.laneOrderIds.length !== laneOrderIds.length ||
+    normalisedConfig.laneOrderIds.some((laneId, index) => laneOrderIds[index] !== laneId)
+  ) {
+    laneOrderIds = normalisedConfig.laneOrderIds
+  }
+}
+
   $: if (loadedWorldviewName !== '' && loadedWorldviewName !== worldviewName && !isStateLoading) {
     void loadVerticalTimelineState(worldviewName)
   }
+
+// 持久化：保存配置到 localStorage
+$: if (
+  loadedWorldviewName !== '' &&
+  hydratedLaneConfigWorldview === loadedWorldviewName &&
+  !isStateLoading
+) {
+  saveLaneConfigToStorage(loadedWorldviewName, hiddenLaneIds, laneOrderIds)
+}
 
   function createEmptyCapabilities(): VerticalTimelineCapabilities {
     return {
@@ -615,6 +723,116 @@
     dialogInitialContext = createEmptyDialogContext()
   }
 
+  function createOrderedLanes(
+    sourceLanes: VerticalTimelineLane[],
+    orderedIds: string[],
+  ): VerticalTimelineLane[] {
+    if (sourceLanes.length === 0) {
+      return []
+    }
+
+    const laneMap = new Map(sourceLanes.map((lane) => [lane.id, lane]))
+    const ordered = orderedIds.flatMap((laneId) => {
+      const lane = laneMap.get(laneId)
+      return lane ? [lane] : []
+    })
+    const missing = sourceLanes.filter((lane) => !orderedIds.includes(lane.id))
+
+    return [...ordered, ...missing]
+  }
+
+  function handleLaneDragStart(event: DragEvent, laneId: string): void {
+    draggingLaneId = laneId
+    event.dataTransfer?.setData('text/plain', laneId)
+
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move'
+    }
+  }
+
+  function handleLaneDragOver(event: DragEvent): void {
+    if (draggingLaneId === '') {
+      return
+    }
+
+    event.preventDefault()
+
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move'
+    }
+  }
+
+  function handleLaneDrop(targetLaneId: string): void {
+    const sourceLaneId = draggingLaneId
+    draggingLaneId = ''
+
+    if (sourceLaneId === '' || sourceLaneId === targetLaneId) {
+      return
+    }
+
+    const nextLaneOrderIds = orderedLanes.map((lane) => lane.id)
+    const sourceIndex = nextLaneOrderIds.indexOf(sourceLaneId)
+    const targetIndex = nextLaneOrderIds.indexOf(targetLaneId)
+
+    if (sourceIndex < 0 || targetIndex < 0) {
+      return
+    }
+
+    const [sourceId] = nextLaneOrderIds.splice(sourceIndex, 1)
+    nextLaneOrderIds.splice(targetIndex, 0, sourceId)
+    laneOrderIds = nextLaneOrderIds
+  }
+
+  function handleLaneDragEnd(): void {
+    draggingLaneId = ''
+  }
+
+  function isLaneHidden(laneId: string): boolean {
+    return hiddenLaneIdSet.has(laneId)
+  }
+
+  function getFirstVisibleManageableLaneId(hiddenIds = hiddenLaneIdSet): string {
+    return lanes.find(
+      (lane) => permissions.manageableLaneIds.includes(lane.id) && !hiddenIds.has(lane.id),
+    )?.id ?? ''
+  }
+
+  function clearHiddenLaneSelection(hiddenIds: Set<string>): void {
+    const activeLaneId = eventsById[activeEventId]?.laneId ?? ''
+    const detailLaneId = eventsById[detailEventId]?.laneId ?? ''
+    const editingLaneId = eventsById[editingEventId]?.laneId ?? ''
+
+    if (activeLaneId !== '' && hiddenIds.has(activeLaneId)) {
+      activeEventId = ''
+    }
+
+    if (detailLaneId !== '' && hiddenIds.has(detailLaneId)) {
+      detailEventId = ''
+    }
+
+    if (dialogMode === 'edit-event' && editingLaneId !== '' && hiddenIds.has(editingLaneId)) {
+      closeDialog()
+    }
+
+    if (selectedLaneId !== '' && hiddenIds.has(selectedLaneId)) {
+      selectedLaneId = getFirstVisibleManageableLaneId(hiddenIds)
+    }
+  }
+
+  function toggleLaneVisibility(laneId: string): void {
+    const nextHiddenLaneIds = hiddenLaneIdSet.has(laneId)
+      ? hiddenLaneIds.filter((entry) => entry !== laneId)
+      : [...hiddenLaneIds, laneId]
+    const nextHiddenLaneIdSet = new Set(nextHiddenLaneIds)
+
+    hiddenLaneIds = nextHiddenLaneIds
+    clearHiddenLaneSelection(nextHiddenLaneIdSet)
+  }
+
+  function showAllLanes(): void {
+    hiddenLaneIds = []
+  }
+
   function syncSelectionState(nextState: VerticalTimelineState): void {
     const nextNodeOptions = flattenVerticalTimelineNodes(nextState.years)
     const nextManageableLanes = nextState.lanes.filter((lane) =>
@@ -679,28 +897,43 @@
     resetNodeDraft(nextNodeOptions.find((node) => node.id === selectedNodeId) ?? null)
   }
 
-  function applyTimelineState(nextState: VerticalTimelineState, targetWorldview = worldviewName): void {
-    lanes = nextState.lanes.map((lane) => ({ ...lane }))
-    years = nextState.years.map((year) => ({
-      ...year,
-      bubblesByLane: { ...year.bubblesByLane },
-      months: year.months.map((month) => ({
-        ...month,
-        bubblesByLane: { ...month.bubblesByLane },
-        days: month.days.map((day) => ({
-          ...day,
-          bubblesByLane: { ...day.bubblesByLane },
-        })),
-      })),
-    }))
-    events = nextState.events.map((event) => ({
-      ...event,
-      tags: [...event.tags],
-    }))
-    loadedWorldviewName = targetWorldview
-    syncSelectionState(nextState)
+function applyTimelineState(nextState: VerticalTimelineState, targetWorldview = worldviewName): void {
+  const shouldRestoreLaneConfig = hydratedLaneConfigWorldview !== targetWorldview
+
+  if (loadedWorldviewName !== '' && loadedWorldviewName !== targetWorldview) {
+    draggingLaneId = ''
   }
 
+  lanes = nextState.lanes.map((lane) => ({ ...lane }))
+  years = nextState.years.map((year) => ({
+    ...year,
+    bubblesByLane: { ...year.bubblesByLane },
+    months: year.months.map((month) => ({
+      ...month,
+      bubblesByLane: { ...month.bubblesByLane },
+      days: month.days.map((day) => ({
+        ...day,
+        bubblesByLane: { ...day.bubblesByLane },
+      })),
+    })),
+  }))
+  events = nextState.events.map((event) => ({
+    ...event,
+    tags: [...event.tags],
+  }))
+
+  const laneConfigSource = shouldRestoreLaneConfig
+    ? loadLaneConfigFromStorage(targetWorldview)
+    : { hiddenLaneIds, laneOrderIds }
+
+  const normalisedLaneConfig = normaliseLaneConfigForLanes(laneConfigSource, lanes)
+
+  hiddenLaneIds = normalisedLaneConfig.hiddenLaneIds
+  laneOrderIds = normalisedLaneConfig.laneOrderIds
+  hydratedLaneConfigWorldview = targetWorldview
+  loadedWorldviewName = targetWorldview
+  syncSelectionState(nextState)
+}
   function applyTimelineResponse(
     payload: VerticalTimelineApiResponse,
     targetWorldview = worldviewName,
@@ -1012,15 +1245,24 @@
     }
 
     const nextNodeId = nodeId || nodeOptions[0]?.id || ''
-    const nextLaneId = laneId || manageableLanes[0]?.id || ''
+    const nextLaneId = laneId && visibleLaneIdSet.has(laneId)
+      ? laneId
+      : visibleManageableLanes[0]?.id ?? ''
 
     if (nextNodeId === '' || nextLaneId === '') {
-      sharedSyncError = '请先确认时间点和可编辑角色都已存在。'
+      sharedSyncError = hiddenLaneIds.length > 0
+        ? '请先显示至少一个可编辑角色轨道。'
+        : '请先确认时间点和可编辑角色都已存在。'
       return
     }
 
     if (!permissions.manageableLaneIds.includes(nextLaneId)) {
       sharedSyncError = '当前账号没有在该角色下创建事件的权限。'
+      return
+    }
+
+    if (!visibleLaneIdSet.has(nextLaneId)) {
+      sharedSyncError = '目标角色轨道已隐藏，请先显示该角色轨道。'
       return
     }
 
@@ -1438,9 +1680,9 @@
     )
   }
 
-  onMount(() => {
-    void loadVerticalTimelineState(worldviewName)
-  })
+onMount(() => {
+  void loadVerticalTimelineState(worldviewName)
+})
 </script>
 
 {#if detailEvent}
@@ -1531,10 +1773,67 @@
 
         <div class="flex flex-wrap gap-3 rounded-[24px] border border-slate-200/80 bg-slate-50/70 px-4 py-4 text-sm text-slate-600">
           <span>当前时间点：{formatNodeLabel(selectedNode)}</span>
-          <span>当前角色：{selectedLane?.name ?? '未选择'}</span>
-          <span>可见角色：{lanes.length}</span>
-          <span>事件数：{events.length}</span>
+          <span>当前角色：{selectedLaneLabel}</span>
+          <span>可见角色：{visibleLanes.length} / {lanes.length}</span>
+          <span>事件数：{visibleEvents.length} / {events.length}</span>
         </div>
+
+        {#if lanes.length > 0}
+          <div class="grid gap-3 rounded-[24px] border border-slate-200/80 bg-white/70 px-4 py-4 text-sm text-slate-600">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="grid gap-1">
+                <span class="font-semibold text-slate-700">角色轨道显示与排序</span>
+                <span class="text-xs text-slate-400">拖动左侧手柄调整显示顺序。</span>
+              </div>
+              {#if hiddenLaneIds.length > 0}
+                <button class="toolbar-action" type="button" onclick={showAllLanes}>
+                  显示全部
+                </button>
+              {/if}
+            </div>
+
+            <div class="flex flex-wrap gap-2" role="list">
+              {#each orderedLanes as lane (lane.id)}
+                {@const laneHidden = isLaneHidden(lane.id)}
+                <div
+                  class={`flex items-center gap-1 rounded-full border px-2 py-1 text-sm font-semibold transition-all duration-150 ${
+                    laneHidden ? 'border-slate-200 bg-white text-slate-400 opacity-60 hover:opacity-100' : 'border-slate-200 bg-white hover:-translate-y-0.5'
+                  } ${draggingLaneId === lane.id ? 'opacity-45' : ''}`}
+                  ondragover={handleLaneDragOver}
+                  ondrop={() => handleLaneDrop(lane.id)}
+                  role="listitem"
+                >
+                  <span
+                    aria-label={`拖动排序：${lane.name}`}
+                    class="cursor-grab select-none rounded-full px-1.5 text-slate-400 active:cursor-grabbing"
+                    draggable="true"
+                    ondragend={handleLaneDragEnd}
+                    ondragstart={(event) => handleLaneDragStart(event, lane.id)}
+                    role="button"
+                    tabindex="0"
+                    title="拖动排序"
+                  >
+                    ⋮⋮
+                  </span>
+
+                  <button
+                    aria-pressed={!laneHidden}
+                    class={`rounded-full px-2 py-0.5 transition-colors duration-150 ${
+                      laneHidden ? 'text-slate-400' : ''
+                    }`}
+                    style={laneHidden ? '' : createVerticalTimelineLaneStyle(lane)}
+                    type="button"
+                    onclick={() => toggleLaneVisibility(lane.id)}
+                  >
+                    <span style={laneHidden ? '' : 'color: var(--lane-color)'}>
+                      {laneHidden ? '显示' : '隐藏'} · {lane.name}
+                    </span>
+                  </button>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
 
         {#if sharedSyncError !== ''}
           <p class="m-0 rounded-2xl border border-amber-200/80 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-700">
@@ -1559,6 +1858,16 @@
               {/if}
             </p>
           </div>
+        {:else if visibleLanes.length === 0}
+          <div class="rounded-[24px] border border-dashed border-slate-200 bg-slate-50/60 px-6 py-10 text-center">
+            <strong class="block text-slate-800">所有角色轨道已隐藏</strong>
+            <p class="mt-2 text-sm leading-6 text-slate-500">
+              点击上方“显示全部”，或单独显示某个角色轨道。
+            </p>
+            <button class="toolbar-action mt-4" type="button" onclick={showAllLanes}>
+              显示全部角色轨道
+            </button>
+          </div>
         {:else}
           <VerticalTimeline
             bind:activeEventId
@@ -1568,7 +1877,7 @@
             editableNodeIds={permissions.editableNodeIds}
             {expansionResetKey}
             {eventsById}
-            {lanes}
+            lanes={visibleLanes}
             manageableLaneIds={permissions.manageableLaneIds}
             onSelectEvent={handleSelectEvent}
             onSelectLane={handleSelectLane}
@@ -1588,7 +1897,7 @@
 {#if dialogMode !== 'none'}
   <div
     aria-hidden="true"
-    class="chat-nickname-overlay"
+    class="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/35 px-4 py-8 backdrop-blur-sm"
     onclick={closeDialog}
     onkeydown={(event) => {
       if (event.key === 'Escape') {
@@ -1600,14 +1909,13 @@
   >
     <div
       aria-modal="true"
-      class="chat-nickname-dialog max-h-[85vh] overflow-y-auto"
+      class="max-h-[85vh] w-full max-w-[760px] overflow-y-auto rounded-[28px] border border-slate-200/80 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.24)]"
       onkeydown={(event) => {
         if (event.key === 'Escape') {
           closeDialog()
         }
       }}
       role="dialog"
-      style="width:min(100%, 760px)"
       tabindex="0"
       onclick={(event) => event.stopPropagation()}
     >
@@ -1721,7 +2029,7 @@
             <span class="section-label">事件</span>
             <h3>{dialogMode === 'create-event' ? '新增事件' : '编辑事件'}</h3>
             <p>
-              时间点：{formatNodeLabel(selectedNode)} · 轨道：{selectedLane?.name ?? '未选择'}
+              时间点：{formatNodeLabel(selectedNode)} · 轨道：{selectedLaneLabel}
             </p>
           </div>
 
@@ -1729,7 +2037,7 @@
             <label class="grid gap-2 text-sm text-slate-500">
               <span>目标轨道</span>
               <select bind:value={selectedLaneId} class="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-800">
-                {#each manageableLanes as lane}
+                {#each visibleManageableLanes as lane}
                   <option value={lane.id}>{lane.name}</option>
                 {/each}
               </select>
