@@ -1921,7 +1921,7 @@
 <main
   class="shell"
   class:is-chat-room={activePage === 'chat-room'}
-  class:is-access-gated={isChatAuthChecking || !chatAuthUser || !hasAcceptedUserAgreement}
+  class:is-access-gated={isChatAuthChecking || !chatAuthUser || isUserAgreementLoading || !hasAcceptedUserAgreement}
   class:is-home={activePage === 'home'}
   style={themeStyle}
 >
@@ -1960,6 +1960,13 @@
         </button>
       </form>
     </section>
+  {:else if isUserAgreementLoading}
+    <section class="access-gate" aria-live="polite">
+      <div class="access-gate-panel">
+        <p class="section-label">用户协议</p>
+        <h1>正在加载用户协议</h1>
+      </div>
+    </section>
   {:else if !hasAcceptedUserAgreement}
     <section class="access-gate" aria-label="用户协议">
       <div class="access-gate-panel agreement-panel">
@@ -1968,9 +1975,22 @@
           <h1>用户协议</h1>
         </div>
 
-        <div class="agreement-content" aria-label="用户协议内容"></div>
+        <div class="agreement-content" aria-label="用户协议内容">
+          {#if userAgreementError !== ''}
+            <p class="agreement-error">{userAgreementError}</p>
+          {:else}
+            {#each userAgreementLines as line, index (`${index}:${line.text}`)}
+              <p class={`agreement-line agreement-line-${line.kind}`}>{line.text}</p>
+            {/each}
+          {/if}
+        </div>
 
-        <button class="access-gate-action" type="button" onclick={acceptUserAgreement}>
+        <button
+          class="access-gate-action"
+          disabled={userAgreementSignature === ''}
+          type="button"
+          onclick={acceptUserAgreement}
+        >
           同意并进入
         </button>
       </div>

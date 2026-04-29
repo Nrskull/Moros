@@ -242,9 +242,50 @@ code {
 
 .agreement-content {
   min-height: 220px;
+  max-height: min(58vh, 520px);
+  padding: 18px;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
+}
+
+.agreement-line {
+  margin: 0 0 0.72rem;
+  color: var(--text);
+  font-size: 0.94rem;
+  line-height: 1.72;
+}
+
+.agreement-line-meta {
+  margin-bottom: 0.38rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.agreement-line-chapter {
+  margin-top: 1.35rem;
+  margin-bottom: 0.82rem;
+  color: var(--text);
+  font-size: 1.08rem;
+  font-weight: 800;
+}
+
+.agreement-line-article {
+  margin-top: 1.05rem;
+  margin-bottom: 0.58rem;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.agreement-error {
+  margin: 0;
+  padding: 0.72rem 0.82rem;
+  border: 1px solid rgba(190, 18, 60, 0.26);
+  border-radius: 8px;
+  background: rgba(244, 63, 94, 0.1);
+  color: #9f1239;
+  font-size: 0.9rem;
 }
 
 .site-record-footer {
