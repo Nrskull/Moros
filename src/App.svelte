@@ -51,6 +51,7 @@
   type DrawerMode = 'none' | 'event' | 'manage'
   type EventEditorMode = 'create' | 'edit'
   type EventDragMode = 'move' | 'resize-end'
+  type AgreementLineKind = 'article' | 'body' | 'chapter' | 'meta'
   type NavigationItemId = 'chat-room' | 'home' | 'log-workbench' | 'tools-overview' | 'vertical-timeline'
   type TimelineMode = 'view' | 'edit'
   type ThemeMode = 'light' | 'dark'
@@ -144,6 +145,8 @@
   const EVENT_DRAG_THRESHOLD = 10
   const DEFAULT_WORLDVIEW_NAME = '未分类世界观'
   const THEME_MODE_STORAGE_KEY = 'morosonder-theme-mode'
+  const USER_AGREEMENT_STORAGE_KEY = 'morosonder-user-agreement-accepted'
+  const USER_AGREEMENT_PATH = '/userAgreement.md'
   const DARK_WORLDVIEW_THEME_STYLE = [
     '--theme-surface-start:#101824',
     '--theme-surface-end:#0c111a',
@@ -330,6 +333,14 @@
   let chatAuthUser: ChatUser | null = null
   let isChatAuthChecking = true
   let isChatLogoutPending = false
+  let accessKeyDraft = ''
+  let accessKeyError = ''
+  let isAccessKeySubmitting = false
+  let hasAcceptedUserAgreement = false
+  let isUserAgreementLoading = true
+  let userAgreementError = ''
+  let userAgreementSignature = ''
+  let userAgreementText = ''
   let chatLogoutSerial = 0
   let chatMobileMenuItems: ChatMobileMenuItem[] = []
   let timelineMode: TimelineMode = 'view'
@@ -864,10 +875,124 @@
     try {
       const payload = await requestChatAuth('/auth/me', { method: 'GET' })
       chatAuthUser = payload.ok && payload.authenticated === true && payload.currentUser ? payload.currentUser : null
+
+      if (chatAuthUser) {
+        accessKeyError = ''
+      }
     } catch {
       chatAuthUser = null
     } finally {
       isChatAuthChecking = false
+    }
+  }
+
+  function createUserAgreementSignature(text: string): string {
+    let hash = 0
+
+    for (let index = 0; index < text.length; index += 1) {
+      hash = (hash * 31 + text.charCodeAt(index)) | 0
+    }
+
+    return `${text.length}:${(hash >>> 0).toString(36)}`
+  }
+
+  function getAgreementLineKind(line: string): AgreementLineKind {
+    const text = line.trim()
+
+    if (/^第.+章/u.test(text)) {
+      return 'chapter'
+    }
+
+    if (/^第.+条/u.test(text)) {
+      return 'article'
+    }
+
+    if (/^(协议编号|生效日期)：/u.test(text)) {
+      return 'meta'
+    }
+
+    return 'body'
+  }
+
+  function restoreUserAgreementState(signature = userAgreementSignature): void {
+    if (signature === '' || typeof localStorage === 'undefined') {
+      hasAcceptedUserAgreement = false
+      return
+    }
+
+    hasAcceptedUserAgreement = localStorage.getItem(USER_AGREEMENT_STORAGE_KEY) === signature
+  }
+
+  function acceptUserAgreement(): void {
+    if (userAgreementSignature === '') {
+      return
+    }
+
+    hasAcceptedUserAgreement = true
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(USER_AGREEMENT_STORAGE_KEY, userAgreementSignature)
+    }
+  }
+
+  async function loadUserAgreement(): Promise<void> {
+    isUserAgreementLoading = true
+    userAgreementError = ''
+
+    try {
+      const response = await fetch(USER_AGREEMENT_PATH, { cache: 'no-cache' })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      const text = (await response.text()).trim()
+      userAgreementText = text
+      userAgreementSignature = createUserAgreementSignature(text)
+      restoreUserAgreementState(userAgreementSignature)
+    } catch {
+      userAgreementText = ''
+      userAgreementSignature = ''
+      hasAcceptedUserAgreement = false
+      userAgreementError = '用户协议加载失败，请刷新后重试。'
+    } finally {
+      isUserAgreementLoading = false
+    }
+  }
+
+  async function handleAccessGateSubmit(event: SubmitEvent): Promise<void> {
+    event.preventDefault()
+
+    const safeAccessKey = accessKeyDraft.trim()
+
+    if (safeAccessKey === '') {
+      accessKeyError = '请输入访问密钥。'
+      return
+    }
+
+    isAccessKeySubmitting = true
+    accessKeyError = ''
+
+    try {
+      const payload = await requestChatAuth('/auth/access-key', {
+        body: JSON.stringify({ accessKey: safeAccessKey }),
+        method: 'POST',
+      })
+
+      if (!payload.ok || !payload.currentUser) {
+        accessKeyError = payload.message ?? '访问密钥验证失败。'
+        return
+      }
+
+      chatAuthUser = payload.currentUser
+      isChatAuthChecking = false
+      accessKeyDraft = ''
+      accessKeyError = ''
+      await loadManagedWorldviews()
+    } catch {
+      accessKeyError = '访问密钥验证失败，请确认服务已启动。'
+    } finally {
+      isAccessKeySubmitting = false
     }
   }
 
@@ -921,6 +1046,10 @@
   function handleChatAuthStateChange(nextUser: ChatUser | null): void {
     chatAuthUser = nextUser
     isChatAuthChecking = false
+
+    if (nextUser) {
+      accessKeyError = ''
+    }
   }
 
   function getManagedWorldview(name: string): ManagedWorldview | undefined {
@@ -1264,6 +1393,14 @@
   $: themeStyle = applyThemeModeToWorldviewStyle(createWorldviewThemeStyle(currentWorldviewTheme))
   $: themeToggleLabel = themeMode === 'dark' ? '切换日间模式' : '切换夜间模式'
   $: themeToggleIcon = themeMode === 'dark' ? '/day.svg' : '/night.svg'
+  $: userAgreementLines = userAgreementText
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .map((line) => ({
+      kind: getAgreementLineKind(line),
+      text: line,
+    }))
   $: chatMobileMenuItems = [
     ...navigationItems.map((item) => ({
       action: () => navigateToPage(item.page),
@@ -1757,6 +1894,7 @@
 
   onMount(() => {
     restoreThemeMode()
+    void loadUserAgreement()
     syncRouteWithLocation(true)
     hasMountedRouter = true
     void loadManagedWorldviews()
@@ -1783,9 +1921,61 @@
 <main
   class="shell"
   class:is-chat-room={activePage === 'chat-room'}
+  class:is-access-gated={isChatAuthChecking || !chatAuthUser || !hasAcceptedUserAgreement}
   class:is-home={activePage === 'home'}
   style={themeStyle}
 >
+  {#if isChatAuthChecking}
+    <section class="access-gate" aria-live="polite">
+      <div class="access-gate-panel">
+        <p class="section-label">访问校验</p>
+        <h1>正在确认登录状态</h1>
+      </div>
+    </section>
+  {:else if !chatAuthUser}
+    <section class="access-gate" aria-label="密钥登录">
+      <form class="access-gate-panel" onsubmit={handleAccessGateSubmit}>
+        <div class="access-gate-copy">
+          <p class="section-label">访问密钥</p>
+          <h1>请输入访问密钥</h1>
+        </div>
+
+        <label class="access-gate-field">
+          <span>密钥</span>
+          <input
+            bind:value={accessKeyDraft}
+            autocomplete="current-password"
+            disabled={isAccessKeySubmitting}
+            placeholder="访问密钥"
+            type="password"
+          />
+        </label>
+
+        {#if accessKeyError !== ''}
+          <div class="access-gate-error">{accessKeyError}</div>
+        {/if}
+
+        <button class="access-gate-action" disabled={isAccessKeySubmitting} type="submit">
+          {isAccessKeySubmitting ? '正在验证' : '进入网站'}
+        </button>
+      </form>
+    </section>
+  {:else if !hasAcceptedUserAgreement}
+    <section class="access-gate" aria-label="用户协议">
+      <div class="access-gate-panel agreement-panel">
+        <div class="access-gate-copy">
+          <p class="section-label">用户协议</p>
+          <h1>用户协议</h1>
+        </div>
+
+        <div class="agreement-content" aria-label="用户协议内容"></div>
+
+        <button class="access-gate-action" type="button" onclick={acceptUserAgreement}>
+          同意并进入
+        </button>
+      </div>
+    </section>
+  {:else}
   <nav class="side-nav" aria-label="页面切换">
     <div class="side-nav-group">
       {#each navigationItems as item (item.id)}
@@ -2399,4 +2589,7 @@
     </div>
   {/if}
 
+  {/if}
+
+  <footer class="site-record-footer">ICP备2026017057号-1</footer>
 </main>

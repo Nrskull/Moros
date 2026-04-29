@@ -527,6 +527,28 @@ database.exec(`
   CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
 
+  CREATE TABLE IF NOT EXISTS auth_login_events (
+    id TEXT PRIMARY KEY,
+    result TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    user_id TEXT,
+    user_handle TEXT,
+    user_display_name TEXT,
+    user_role TEXT,
+    access_key_id TEXT,
+    access_key_label TEXT,
+    auth_session_id TEXT,
+    client_ip TEXT,
+    client_name TEXT,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_auth_login_events_created_at ON auth_login_events(created_at);
+  CREATE INDEX IF NOT EXISTS idx_auth_login_events_result_created_at ON auth_login_events(result, created_at);
+  CREATE INDEX IF NOT EXISTS idx_auth_login_events_user_created_at ON auth_login_events(user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_auth_login_events_access_key_created_at ON auth_login_events(access_key_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_auth_login_events_client_ip_created_at ON auth_login_events(client_ip, created_at);
+
   CREATE TABLE IF NOT EXISTS room_memberships (
     room_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
@@ -1477,6 +1499,72 @@ const statementDeleteExpiredAuthSessions = database.prepare(`
   WHERE revoked_at IS NOT NULL OR expires_at <= ?
 `)
 
+const statementInsertAuthLoginEvent = database.prepare(`
+  INSERT INTO auth_login_events (
+    id,
+    result,
+    reason,
+    user_id,
+    user_handle,
+    user_display_name,
+    user_role,
+    access_key_id,
+    access_key_label,
+    auth_session_id,
+    client_ip,
+    client_name,
+    created_at
+  )
+  VALUES (
+    @id,
+    @result,
+    @reason,
+    @userId,
+    @userHandle,
+    @userDisplayName,
+    @userRole,
+    @accessKeyId,
+    @accessKeyLabel,
+    @authSessionId,
+    @clientIp,
+    @clientName,
+    @createdAt
+  )
+`)
+
+const statementSelectAuthLoginEventsForAdmin = database.prepare(`
+  SELECT
+    id,
+    result,
+    reason,
+    user_id AS userId,
+    user_handle AS userHandle,
+    user_display_name AS userDisplayName,
+    user_role AS userRole,
+    access_key_id AS accessKeyId,
+    access_key_label AS accessKeyLabel,
+    auth_session_id AS authSessionId,
+    client_ip AS clientIp,
+    client_name AS clientName,
+    created_at AS createdAt
+  FROM auth_login_events
+  WHERE (@result = '' OR result = @result)
+    AND (@userId = '' OR user_id = @userId)
+    AND (@accessKeyId = '' OR access_key_id = @accessKeyId)
+    AND (@clientIp = '' OR client_ip = @clientIp)
+  ORDER BY created_at DESC, id DESC
+  LIMIT @limit OFFSET @offset
+`)
+
+const statementCountAuthLoginEventsForAdmin = database.prepare(`
+  SELECT COUNT(*) AS count
+  FROM auth_login_events
+  WHERE (@result = '' OR result = @result)
+    AND (@userId = '' OR user_id = @userId)
+    AND (@accessKeyId = '' OR access_key_id = @accessKeyId)
+    AND (@clientIp = '' OR client_ip = @clientIp)
+`)
+
 const statementUpdateSessionActiveCharacter = database.prepare(`
   UPDATE sessions
   SET active_character_id = @activeCharacterId,
@@ -1988,6 +2076,10 @@ function createAuthSessionId() {
   return `auth_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
 }
 
+function createAuthLoginEventId() {
+  return `authlog_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
+}
+
 function createAuthSessionToken() {
   return crypto.randomBytes(32).toString('base64url')
 }
@@ -2167,6 +2259,73 @@ function resolveClientIp(request) {
 function resolveClientName(request) {
   const userAgent = String(request.headers['user-agent'] ?? '').trim()
   return userAgent.slice(0, 160)
+}
+
+function sanitiseAuthAuditText(value, maxLength = 160) {
+  const safeValue = String(value ?? '').trim().slice(0, maxLength)
+  return safeValue === '' ? null : safeValue
+}
+
+function resolveAccessKeyLoginFailureReason(row, now = Date.now()) {
+  if (!row) {
+    return 'invalid_access_key'
+  }
+
+  if (row.status !== 'active') {
+    return 'inactive_user'
+  }
+
+  if (row.revokedAt !== null) {
+    return 'revoked_access_key'
+  }
+
+  if (row.expiresAt !== null && row.expiresAt <= now) {
+    return 'expired_access_key'
+  }
+
+  return 'invalid_access_key'
+}
+
+function recordAuthLoginEvent(request, options = {}) {
+  const accessKeyRow = options.accessKeyRow ?? null
+  const id = createAuthLoginEventId()
+
+  try {
+    statementInsertAuthLoginEvent.run({
+      accessKeyId: sanitiseAuthAuditText(accessKeyRow?.accessKeyId, 80),
+      accessKeyLabel: sanitiseAuthAuditText(accessKeyRow?.label, 160),
+      authSessionId: sanitiseAuthAuditText(options.authSessionId, 80),
+      clientIp: sanitiseAuthAuditText(options.clientIp ?? resolveClientIp(request), 128),
+      clientName: sanitiseAuthAuditText(options.clientName ?? resolveClientName(request), 160),
+      createdAt: Number.isFinite(options.createdAt) ? options.createdAt : Date.now(),
+      id,
+      reason: sanitiseAuthAuditText(options.reason, 80) ?? 'unknown',
+      result: options.result === 'success' ? 'success' : 'failure',
+      userDisplayName: sanitiseAuthAuditText(accessKeyRow?.displayName, 160),
+      userHandle: sanitiseAuthAuditText(accessKeyRow?.handle, 80),
+      userId: sanitiseAuthAuditText(accessKeyRow?.userId ?? accessKeyRow?.id, 80),
+      userRole: sanitiseAuthAuditText(accessKeyRow?.role, 32),
+    })
+    return id
+  } catch (error) {
+    console.error('无法写入登录审计日志:', error)
+    return null
+  }
+}
+
+function normaliseAuthLoginEventResult(value) {
+  const safeValue = String(value ?? '').trim().toLowerCase()
+  return safeValue === 'success' || safeValue === 'failure' ? safeValue : ''
+}
+
+function normaliseAuthLoginEventLimit(value) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10)
+  return Number.isFinite(parsed) ? Math.min(500, Math.max(1, parsed)) : 100
+}
+
+function normaliseAuthLoginEventOffset(value) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10)
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
 }
 
 function pruneExpiredAuthRateLimitEntries(now = Date.now()) {
@@ -4282,6 +4441,32 @@ function serialiseUser(row) {
   }
 }
 
+function serialiseAuthLoginEvent(row) {
+  return {
+    accessKey: row.accessKeyId
+      ? {
+          id: row.accessKeyId,
+          label: row.accessKeyLabel ?? null,
+        }
+      : null,
+    authSessionId: row.authSessionId ?? null,
+    clientIp: row.clientIp ?? null,
+    clientName: row.clientName ?? null,
+    createdAt: Number(row.createdAt ?? 0),
+    id: row.id,
+    reason: row.reason,
+    result: row.result,
+    user: row.userId
+      ? {
+          displayName: row.userDisplayName ?? row.userHandle ?? row.userId,
+          handle: row.userHandle ?? '',
+          id: row.userId,
+          role: row.userRole ?? '',
+        }
+      : null,
+  }
+}
+
 function serialiseCharacter(row) {
   return {
     attributes: {
@@ -5688,10 +5873,17 @@ function handleDisconnect(state, socket) {
 async function handleAccessKeyLogin(request, response) {
   const headers = appendCorsHeaders(request)
   const clientIp = resolveClientIp(request)
+  const clientName = resolveClientName(request)
   const rateLimitKey = `auth:${clientIp}`
   const rateLimitState = getAuthRateLimitState(rateLimitKey)
 
   if (rateLimitState.retryAfterMs > 0) {
+    recordAuthLoginEvent(request, {
+      clientIp,
+      clientName,
+      reason: 'rate_limited',
+      result: 'failure',
+    })
     writeJson(
       response,
       429,
@@ -5719,6 +5911,14 @@ async function handleAccessKeyLogin(request, response) {
       error instanceof Error && error.message === 'BODY_TOO_LARGE'
         ? '请求内容过大。'
         : '请求格式无效。'
+    recordAuthLoginEvent(request, {
+      clientIp,
+      clientName,
+      reason: error instanceof Error && error.message === 'BODY_TOO_LARGE'
+        ? 'request_body_too_large'
+        : 'invalid_request_body',
+      result: 'failure',
+    })
     writeJson(response, 400, { message, ok: false }, { headers })
     return
   }
@@ -5726,6 +5926,12 @@ async function handleAccessKeyLogin(request, response) {
   const accessKeyValue = sanitiseAccessKey(body?.accessKey)
 
   if (accessKeyValue === '') {
+    recordAuthLoginEvent(request, {
+      clientIp,
+      clientName,
+      reason: 'missing_access_key',
+      result: 'failure',
+    })
     writeJson(response, 400, { message: '请输入访问密钥。', ok: false }, { headers })
     return
   }
@@ -5741,6 +5947,14 @@ async function handleAccessKeyLogin(request, response) {
   if (!isValid) {
     registerAuthFailure(rateLimitKey, now)
     const nextRateLimitState = getAuthRateLimitState(rateLimitKey, now)
+    recordAuthLoginEvent(request, {
+      accessKeyRow: row,
+      clientIp,
+      clientName,
+      createdAt: now,
+      reason: resolveAccessKeyLoginFailureReason(row, now),
+      result: 'failure',
+    })
 
     writeJson(
       response,
@@ -5767,6 +5981,25 @@ async function handleAccessKeyLogin(request, response) {
   }
 
   const authSession = createAuthSessionForUser(row.userId, row.accessKeyId, request)
+  const loginEventId = recordAuthLoginEvent(request, {
+    accessKeyRow: row,
+    authSessionId: authSession.authSessionId,
+    clientIp,
+    clientName,
+    createdAt: now,
+    reason: 'access_key_accepted',
+    result: 'success',
+  })
+
+  if (!loginEventId) {
+    statementRevokeAuthSessionByTokenHash.run({
+      revokedAt: Date.now(),
+      sessionTokenHash: hashSecret(authSession.sessionToken),
+    })
+    writeJson(response, 500, { message: '登录日志写入失败，已拒绝本次登录。', ok: false }, { headers })
+    return
+  }
+
   statementUpdateAccessKeyLastUsedAt.run({
     id: row.accessKeyId,
     lastUsedAt: now,
@@ -5849,6 +6082,71 @@ function handleLogout(request, response) {
       },
     },
   )
+}
+
+function handleAdminAuthLoginEventsGet(request, response, requestUrl) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext || authContext.user.role !== 'admin') {
+    writeJson(response, 401, { message: '无权访问', ok: false }, { headers })
+    return
+  }
+
+  const filters = {
+    accessKeyId: String(requestUrl.searchParams.get('accessKeyId') ?? '').trim().slice(0, 80),
+    clientIp: String(requestUrl.searchParams.get('clientIp') ?? '').trim().slice(0, 128),
+    limit: normaliseAuthLoginEventLimit(requestUrl.searchParams.get('limit')),
+    offset: normaliseAuthLoginEventOffset(requestUrl.searchParams.get('offset')),
+    result: normaliseAuthLoginEventResult(requestUrl.searchParams.get('result')),
+    userId: String(requestUrl.searchParams.get('userId') ?? '').trim().slice(0, 80),
+  }
+
+  try {
+    writeJson(response, 200, {
+      events: statementSelectAuthLoginEventsForAdmin.all(filters).map(serialiseAuthLoginEvent),
+      filters: {
+        accessKeyId: filters.accessKeyId,
+        clientIp: filters.clientIp,
+        result: filters.result,
+        userId: filters.userId,
+      },
+      limit: filters.limit,
+      offset: filters.offset,
+      ok: true,
+      total: Number(statementCountAuthLoginEventsForAdmin.get(filters)?.count ?? 0),
+    }, { headers })
+  } catch (error) {
+    writeJson(response, 500, { message: String(error), ok: false }, { headers })
+  }
+}
+
+function isPublicApiRequest(requestUrl) {
+  return [
+    '/api/auth/access-key',
+    '/api/auth/me',
+    '/api/auth/logout',
+    '/api/health',
+  ].includes(requestUrl.pathname)
+}
+
+function ensureAuthenticatedApiRequest(request, response, requestUrl) {
+  if (!requestUrl.pathname.startsWith('/api/') || isPublicApiRequest(requestUrl)) {
+    return true
+  }
+
+  const authContext = resolveAuthContextFromRequest(request)
+
+  if (authContext) {
+    return true
+  }
+
+  writeJson(response, 401, {
+    authenticated: false,
+    message: '请先使用访问密钥登录。',
+    ok: false,
+  }, { headers: appendCorsHeaders(request) })
+  return false
 }
 
 function handleWorldviewsGet(request, response) {
@@ -7058,6 +7356,10 @@ const server = http.createServer((request, response) => {
     return
   }
 
+  if (!ensureAuthenticatedApiRequest(request, response, requestUrl)) {
+    return
+  }
+
   if (request.method === 'POST' && requestUrl.pathname === '/api/auth/access-key') {
     void handleAccessKeyLogin(request, response)
     return
@@ -7070,6 +7372,11 @@ const server = http.createServer((request, response) => {
 
   if (request.method === 'POST' && requestUrl.pathname === '/api/auth/logout') {
     handleLogout(request, response)
+    return
+  }
+
+  if (request.method === 'GET' && requestUrl.pathname === '/api/admin/auth-login-events') {
+    handleAdminAuthLoginEventsGet(request, response, requestUrl)
     return
   }
 
@@ -7224,6 +7531,7 @@ const server = http.createServer((request, response) => {
   if (requestUrl.pathname === '/') {
     writeJson(response, 200, {
       endpoints: {
+        adminAuthLoginEvents: '/api/admin/auth-login-events',
         ageChronicleCellNote: '/api/age-chronicle/cell-note',
         ageChronicleEntries: '/api/age-chronicle/entries',
         ageChronicleState: '/api/age-chronicle/state',
@@ -7267,6 +7575,12 @@ server.on('upgrade', (request, socket, head) => {
   }
 
   request.authContext = resolveAuthContextFromRequest(request)
+
+  if (!request.authContext) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+    socket.destroy()
+    return
+  }
 
   websocketServer.handleUpgrade(request, socket, head, (websocket) => {
     websocketServer.emit('connection', websocket, request)
