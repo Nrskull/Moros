@@ -2509,6 +2509,28 @@ code {
   background: linear-gradient(180deg, rgba(255, 251, 239, 0.98), rgba(255, 246, 226, 0.92));
 }
 
+.chat-sticker-bubble {
+  max-width: min(68%, 18rem);
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-sticker-message {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  margin: 0;
+}
+
+.chat-sticker-message img {
+  display: block;
+  max-width: min(11rem, 44vw);
+  max-height: 11rem;
+  object-fit: contain;
+}
+
 .chat-message-reply-preview {
   display: grid;
   gap: 2px;
@@ -2675,6 +2697,192 @@ code {
 .chat-character-settings-trigger svg {
   width: 16px;
   height: 16px;
+}
+
+.chat-character-settings-trigger.has-active-recording {
+  background: color-mix(in srgb, var(--accent) 18%, #ffffff);
+  color: #1f2833;
+}
+
+.chat-record-menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.chat-record-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 8;
+  display: grid;
+  gap: 8px;
+  width: min(220px, calc(100vw - 48px));
+  padding: 10px;
+  border: 1px solid rgba(223, 228, 234, 0.92);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(18px);
+}
+
+.chat-record-menu-status {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 0.25rem 0.32rem;
+}
+
+.chat-record-menu-status strong {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.chat-record-menu-status span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-record-menu-item {
+  width: 100%;
+  min-height: 38px;
+  padding: 0.62rem 0.72rem;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #1f2833;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.chat-record-menu-item:hover:not(:disabled) {
+  background: #e9eef5;
+}
+
+.chat-record-menu-item:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.chat-sticker-menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.chat-sticker-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 10px;
+}
+
+.chat-sticker-trigger img {
+  width: 17px;
+  height: 17px;
+}
+
+.chat-sticker-picker {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 9;
+  display: grid;
+  gap: 10px;
+  width: min(320px, calc(100vw - 48px));
+  max-height: min(420px, 58vh);
+  padding: 12px;
+  border: 1px solid rgba(223, 228, 234, 0.92);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+}
+
+.chat-sticker-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chat-sticker-picker-head strong {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.chat-sticker-picker-head button {
+  min-height: 28px;
+  padding: 0 0.55rem;
+  border: 1px solid rgba(197, 206, 216, 0.82);
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #1f2833;
+  font: inherit;
+  font-size: 0.74rem;
+}
+
+.chat-sticker-picker-status {
+  padding: 0.84rem;
+  border: 1px dashed rgba(197, 206, 216, 0.82);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.chat-sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.chat-sticker-option {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  min-width: 0;
+  min-height: 78px;
+  padding: 8px 6px;
+  border: 1px solid rgba(223, 228, 234, 0.9);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #1f2833;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chat-sticker-option:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-surface);
+}
+
+.chat-sticker-option img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+}
+
+.chat-sticker-option span {
+  display: block;
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.15;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-character-dropdown {
@@ -2902,7 +3110,8 @@ code {
 }
 
 .chat-composer-field textarea,
-.chat-nickname-field input {
+.chat-nickname-field input,
+.chat-nickname-field select {
   width: 100%;
   border: 1px solid rgba(197, 206, 216, 0.9);
   border-radius: 6px;
@@ -3036,13 +3245,15 @@ code {
   font-size: 0.86rem;
 }
 
-.chat-nickname-field input {
+.chat-nickname-field input,
+.chat-nickname-field select {
   min-height: 46px;
   padding: 0.78rem 0.92rem;
 }
 
 .chat-composer-field textarea:focus,
-.chat-nickname-field input:focus {
+.chat-nickname-field input:focus,
+.chat-nickname-field select:focus {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
@@ -5903,12 +6114,14 @@ code {
 :root[data-theme='dark'] .chat-message-panel,
 :root[data-theme='dark'] .chat-mobile-more-panel,
 :root[data-theme='dark'] .chat-character-dropdown,
+:root[data-theme='dark'] .chat-record-menu,
 :root[data-theme='dark'] .chat-character-menu,
 :root[data-theme='dark'] .chat-message-action-menu,
 :root[data-theme='dark'] .chat-character-sheet-page,
 :root[data-theme='dark'] .chat-nickname-dialog,
 :root[data-theme='dark'] .chat-character-dialog,
 :root[data-theme='dark'] .chat-avatar-crop-dialog,
+:root[data-theme='dark'] .chat-sticker-picker,
 :root[data-theme='dark'] .drawer-panel,
 :root[data-theme='dark'] .age-panel,
 :root[data-theme='dark'] .age-editor-card,
@@ -5935,6 +6148,9 @@ code {
 :root[data-theme='dark'] .editor-card,
 :root[data-theme='dark'] .filter-card,
 :root[data-theme='dark'] .list-card,
+:root[data-theme='dark'] .upload-card,
+:root[data-theme='dark'] .bulk-card,
+:root[data-theme='dark'] .sticker-admin-card,
 :root[data-theme='dark'] .status-card,
 :root[data-theme='dark'] .empty-card {
   border-color: var(--line);
@@ -5962,6 +6178,11 @@ code {
 :root[data-theme='dark'] .chat-composer-reply-chip,
 :root[data-theme='dark'] .chat-character-trigger,
 :root[data-theme='dark'] .chat-character-settings-trigger,
+:root[data-theme='dark'] .chat-sticker-trigger,
+:root[data-theme='dark'] .chat-sticker-option,
+:root[data-theme='dark'] .chat-sticker-picker-head button,
+:root[data-theme='dark'] .chat-sticker-picker-status,
+:root[data-theme='dark'] .chat-record-menu-item,
 :root[data-theme='dark'] .chat-character-option-main,
 :root[data-theme='dark'] .chat-character-option-edit,
 :root[data-theme='dark'] .chat-character-create,
@@ -6004,6 +6225,7 @@ code {
 :root[data-theme='dark'] .age-field select,
 :root[data-theme='dark'] .chat-composer-field textarea,
 :root[data-theme='dark'] .chat-nickname-field input,
+:root[data-theme='dark'] .chat-nickname-field select,
 :root[data-theme='dark'] .chat-character-field input,
 :root[data-theme='dark'] .log-page-size select,
 :root[data-theme='dark'] .log-entry-time-field input,
@@ -6035,6 +6257,8 @@ code {
 :root[data-theme='dark'] .chat-panel-head strong,
 :root[data-theme='dark'] .chat-message-head strong,
 :root[data-theme='dark'] .chat-room-card strong,
+:root[data-theme='dark'] .chat-record-menu-status strong,
+:root[data-theme='dark'] .chat-sticker-picker-head strong,
 :root[data-theme='dark'] .chat-member-item strong,
 :root[data-theme='dark'] .chat-empty-state strong,
 :root[data-theme='dark'] .chat-message-meta strong,
@@ -6078,6 +6302,9 @@ code {
 :root[data-theme='dark'] .chat-panel-head span,
 :root[data-theme='dark'] .chat-message-head span,
 :root[data-theme='dark'] .chat-room-card span,
+:root[data-theme='dark'] .chat-record-menu-status span,
+:root[data-theme='dark'] .chat-sticker-message figcaption,
+:root[data-theme='dark'] .chat-sticker-option span,
 :root[data-theme='dark'] .chat-member-item span,
 :root[data-theme='dark'] .chat-composer-actions span,
 :root[data-theme='dark'] .chat-system-message time,
@@ -6122,6 +6349,7 @@ code {
 }
 
 :root[data-theme='dark'] .side-nav-icon,
+:root[data-theme='dark'] .chat-sticker-trigger img,
 :root[data-theme='dark'] .chat-mobile-menu-item img,
 :root[data-theme='dark'] .mobile-more-item img,
 :root[data-theme='dark'] .mobile-more-title img {
@@ -6155,6 +6383,7 @@ code {
 :root[data-theme='dark'] .chat-member-item:hover,
 :root[data-theme='dark'] .chat-room-card.is-active,
 :root[data-theme='dark'] .chat-character-option-main.is-active,
+:root[data-theme='dark'] .chat-sticker-option:hover,
 :root[data-theme='dark'] .log-playback-item.is-current {
   border-color: var(--accent-border);
   background: var(--accent-surface);

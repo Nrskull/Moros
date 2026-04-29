@@ -13,6 +13,13 @@
     type SealDiceStandardLog,
   } from './log-workbench'
   import { confirmDialog } from './dialog'
+  import {
+    createStoryLogRecord,
+    deleteStoryLogRecord,
+    fetchStoryLogRecords,
+    updateStoryLogRecord,
+    type StoredLogRecord,
+  } from './story-logs'
 
   type LogWorkbenchView = 'edit' | 'overview' | 'play'
 
@@ -30,22 +37,6 @@
     name: string
     tags: string[]
     themeStyle: string
-  }
-
-  interface StoredLogRecord {
-    characterColors: Record<string, string>
-    characterVisibility: Record<string, boolean>
-    createdAt: number
-    entries: EditableLogEntry[]
-    id: string
-    primaryCharacter: string
-    sequenceNumber: number
-    sourceFilename: string
-    sourceLabel: string
-    sourceLog: SealDiceStandardLog
-    title: string
-    updatedAt: number
-    worldview: string
   }
 
   interface TextPageRange {
@@ -77,6 +68,7 @@
   let uploadTargetWorldview = ''
   let uploadPrimaryCharacterDrafts: Record<string, string> = {}
   let logRecords: StoredLogRecord[] = []
+  let persistedLogRecordIds = new Set<string>()
   let activeLogId = ''
 
   let sourceFilename = SAMPLE_FILE_NAME
@@ -87,6 +79,7 @@
   let characterVisibility: Record<string, boolean> = {}
   let characterNameDrafts: Record<string, string> = {}
   let loadError = ''
+  let isLoadingRecords = false
   let isLoadingSample = false
   let currentPage = 1
   let pageSize = PAGE_SIZE_OPTIONS[1]
@@ -113,6 +106,7 @@
   let playbackPageIndex = 0
   let playbackMeasureVersion = 0
   let paginationRefreshTicket = 0
+  const pendingRecordPersistTimers = new Map<string, number>()
 
   function autosize(node: HTMLTextAreaElement, _value: string) {
     const resize = () => {
@@ -254,7 +248,7 @@
   }
 
   function isNarrativeBodyEntry(entry: EditableLogEntry): boolean {
-    return !entry.isOoc && !entry.hasCqImage
+    return !entry.isOoc && !entry.hasCqImage && !entry.hasSticker
   }
 
   function getNextLogSequence(worldview: string, primaryCharacter: string): number {
@@ -281,6 +275,7 @@
       source: SealDiceStandardLog
     }
     primaryCharacter: string
+    title?: string
     worldview: string
   }): StoredLogRecord {
     const safePrimaryCharacter = normaliseLogNickname(options.primaryCharacter)
@@ -302,10 +297,46 @@
       sourceFilename: options.filename,
       sourceLabel: options.label,
       sourceLog: cloneSourceLog(options.parsed.source),
-      title: `${options.worldview} - ${safePrimaryCharacter} - ${sequenceNumber}`,
+      title: options.title?.trim() || `${options.worldview} - ${safePrimaryCharacter} - ${sequenceNumber}`,
       updatedAt: now,
       worldview: options.worldview,
     }
+  }
+
+  async function loadPersistedLogRecords(): Promise<void> {
+    isLoadingRecords = true
+
+    try {
+      const records = await fetchStoryLogRecords()
+      logRecords = records
+      persistedLogRecordIds = new Set(records.map((record) => record.id))
+      loadError = ''
+    } catch (error) {
+      loadError = error instanceof Error ? error.message : '故事日志读取失败。'
+    } finally {
+      isLoadingRecords = false
+    }
+  }
+
+  function queuePersistRecord(record: StoredLogRecord): void {
+    if (!persistedLogRecordIds.has(record.id)) {
+      return
+    }
+
+    const existingTimer = pendingRecordPersistTimers.get(record.id)
+
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer)
+    }
+
+    const timer = window.setTimeout(() => {
+      pendingRecordPersistTimers.delete(record.id)
+      void updateStoryLogRecord(record).catch((error) => {
+        loadError = error instanceof Error ? error.message : '故事日志保存失败。'
+      })
+    }, 600)
+
+    pendingRecordPersistTimers.set(record.id, timer)
   }
 
   function persistActiveRecord(): void {
@@ -313,9 +344,11 @@
       return
     }
 
+    let nextActiveRecord: StoredLogRecord | null = null
+
     logRecords = logRecords.map((record) =>
       record.id === activeLogId
-        ? {
+        ? (nextActiveRecord = {
             ...record,
             characterColors: { ...characterColors },
             characterVisibility: { ...characterVisibility },
@@ -324,9 +357,13 @@
             sourceLabel,
             sourceLog: cloneSourceLog(sourceLog!),
             updatedAt: Date.now(),
-          }
+          })
         : record,
     )
+
+    if (nextActiveRecord) {
+      queuePersistRecord(nextActiveRecord)
+    }
   }
 
   function applyRecordToWorkspace(record: StoredLogRecord): void {
@@ -439,15 +476,17 @@
         text,
         worldview,
       })
+      const savedRecord = await createStoryLogRecord(record)
 
-      logRecords = [record, ...logRecords]
+      logRecords = [savedRecord, ...logRecords.filter((item) => item.id !== savedRecord.id)]
+      persistedLogRecordIds = new Set([...persistedLogRecordIds, savedRecord.id])
       uploadPrimaryCharacterDrafts = {
         ...uploadPrimaryCharacterDrafts,
         [worldview]: '',
       }
       expandedWorldview = worldview
       loadError = ''
-      openLogView(record.id, 'edit')
+      openLogView(savedRecord.id, 'edit')
     } catch (error) {
       loadError = error instanceof Error ? error.message : '上传文件解析失败。'
     } finally {
@@ -456,8 +495,8 @@
     }
   }
 
-  async function seedSampleLog(): Promise<void> {
-    if (hasSeededSample || logWorldviewCards.length === 0) {
+  async function seedSampleLog(options: { onlyWhenEmpty?: boolean } = {}): Promise<void> {
+    if (hasSeededSample || (options.onlyWhenEmpty === true && logRecords.length > 0) || logWorldviewCards.length === 0) {
       return
     }
 
@@ -505,7 +544,20 @@
       return
     }
 
-    logRecords = logRecords.filter((item) => item.id !== recordId)
+    try {
+      if (persistedLogRecordIds.has(recordId)) {
+        await deleteStoryLogRecord(recordId)
+        const nextPersistedIds = new Set(persistedLogRecordIds)
+        nextPersistedIds.delete(recordId)
+        persistedLogRecordIds = nextPersistedIds
+      }
+
+      logRecords = logRecords.filter((item) => item.id !== recordId)
+      loadError = ''
+    } catch (error) {
+      loadError = error instanceof Error ? error.message : '故事日志删除失败。'
+      return
+    }
 
     if (recordId === activeLogId) {
       returnToOverview()
@@ -982,11 +1034,18 @@
   }
 
   onMount(() => {
-    void seedSampleLog()
+    void (async () => {
+      await loadPersistedLogRecords()
+      await seedSampleLog({ onlyWhenEmpty: true })
+    })()
   })
 
   onDestroy(() => {
     stopPlayback()
+    for (const timer of pendingRecordPersistTimers.values()) {
+      window.clearTimeout(timer)
+    }
+    pendingRecordPersistTimers.clear()
 
     if (downloadUrl !== '') {
       URL.revokeObjectURL(downloadUrl)
@@ -1139,7 +1198,7 @@
         <div class="board-head-side">
           <div class="board-head-actions">
             {#if view === 'overview'}
-              <button class="toolbar-action" type="button" onclick={seedSampleLog}>
+              <button class="toolbar-action" type="button" onclick={() => seedSampleLog()}>
                 {isLoadingSample ? '正在读取示例…' : '载入示例记录'}
               </button>
             {:else}

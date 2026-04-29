@@ -23,6 +23,7 @@ export interface SealDiceStandardLog {
 export interface EditableLogEntry {
   entryId: string
   hasCqImage: boolean
+  hasSticker: boolean
   isOoc: boolean
   isDice: boolean
   keep: boolean
@@ -77,6 +78,10 @@ export function detectCqImageMessage(message: string): boolean {
   return /\[CQ:image[^\]]*\]/i.test(message)
 }
 
+export function detectStickerPlaceholderMessage(message: string): boolean {
+  return /^\[表情:[^\]]+\]$/u.test(message.trim())
+}
+
 export function createSpeakerKey(item: SealDiceLogItem, fallbackNickname: string, index: number): string {
   const uniformId = typeof item.uniformId === 'string' ? item.uniformId.trim() : ''
   if (uniformId !== '') {
@@ -115,13 +120,15 @@ export function parseSealDiceStandardLog(text: string): {
         typeof item.nickname === 'string' ? normaliseLogNickname(item.nickname) : DEFAULT_NICKNAME
       const isOoc = detectOocMessage(message)
       const hasCqImage = detectCqImageMessage(message)
+      const hasSticker = detectStickerPlaceholderMessage(message)
 
       return {
         entryId: String(item.id ?? `entry_${index}`),
         hasCqImage,
+        hasSticker,
         isDice: item.isDice ?? false,
         isOoc,
-        keep: !isOoc && !hasCqImage,
+        keep: !isOoc && !hasCqImage && !hasSticker,
         message,
         nickname,
         sourceIndex: index,

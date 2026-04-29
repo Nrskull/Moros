@@ -8,7 +8,7 @@ export const CHAT_STORAGE_ROOM_KEY = 'timeline-chat-room-id'
 export const DEFAULT_CHAT_PORT = '3031'
 export const PUBLIC_CHAT_ROOM_ID = 'public'
 
-export type ChatMessageKind = 'system' | 'user' | 'dice'
+export type ChatMessageKind = 'system' | 'user' | 'dice' | 'sticker'
 export type ChatConnectionState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
 export type ChatPresentationMode = 'bubble' | 'kp-narration'
 
@@ -45,6 +45,30 @@ export interface ChatCharacterCard {
   worldview: string
 }
 
+export interface ChatSticker {
+  assetId: string | null
+  characterId: string | null
+  characterName?: string | null
+  characterOwner?: {
+    displayName: string
+    handle: string
+    id: string
+  } | null
+  characterWorldview?: string | null
+  createdAt: number
+  fileUrl: string
+  height: number
+  id: string
+  mimeType: string
+  name: string
+  sha256: string
+  sizeBytes: number
+  source: string
+  status: string
+  updatedAt: number
+  width: number
+}
+
 export interface ChatMessage {
   body: string
   createdAt: number
@@ -64,6 +88,8 @@ export interface ChatMessage {
   speakerCharacterId: string | null
   speakerDisplayMode: ChatPresentationMode
   speakerName: string
+  sticker: ChatSticker | null
+  stickerId: string | null
 }
 
 export interface ChatMember {

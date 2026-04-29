@@ -5,12 +5,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Database from 'better-sqlite3'
+import sharp from 'sharp'
 import { WebSocket, WebSocketServer } from 'ws'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const projectRoot = path.resolve(__dirname, '..')
 const dataDirectory = path.join(projectRoot, 'data')
+const stickerDirectory = path.join(dataDirectory, 'stickers')
 
 const CHAT_HOST = process.env.CHAT_HOST ?? '127.0.0.1'
 const CHAT_PORT = Number.parseInt(process.env.CHAT_PORT ?? '3031', 10)
@@ -90,6 +92,16 @@ const MAX_ROOM_NAME_LENGTH = 32
 const MAX_CHARACTER_NAME_LENGTH = 32
 const MAX_ATTRIBUTE_VALUE = 100
 const MAX_AVATAR_DATA_URL_LENGTH = 400000
+const MAX_STICKER_FILE_BYTES = 2 * 1024 * 1024
+const MAX_STICKER_DIMENSION = 1024
+const CHAT_STICKER_MAX_DIMENSION = 512
+const STICKER_THUMB_MAX_DIMENSION = 160
+const MAX_STICKER_NAME_LENGTH = 48
+const STICKER_UPLOAD_MIME_TYPES = new Set(['jpeg', 'png', 'webp'])
+const STICKER_VARIANT_CHAT = 'chat'
+const STICKER_VARIANT_THUMB = 'thumb'
+const STORY_LOG_MAX_RECORD_JSON_LENGTH = 2 * 1024 * 1024
+const STORY_LOG_MAX_TEXT_LENGTH = 160
 const AGE_CHRONICLE_MAX_WORLDVIEW_LENGTH = 80
 const AGE_CHRONICLE_MAX_CHRONICLE_COUNT = 400
 const AGE_CHRONICLE_MAX_CHARACTER_COUNT = 200
@@ -439,6 +451,7 @@ const DEFAULT_VERTICAL_TIMELINE_EVENTS = [
 ]
 
 fs.mkdirSync(dataDirectory, { recursive: true })
+fs.mkdirSync(stickerDirectory, { recursive: true })
 
 const database = new Database(path.join(dataDirectory, 'chat.sqlite'))
 database.pragma('journal_mode = WAL')
@@ -502,12 +515,74 @@ database.exec(`
     deleted_at INTEGER,
     deleted_by_user_id TEXT,
     kind TEXT NOT NULL,
+    sticker_id TEXT,
     body TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     FOREIGN KEY (room_id) REFERENCES rooms(id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_messages_room_sequence ON messages(room_id, sequence);
+
+  CREATE TABLE IF NOT EXISTS stickers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL,
+    status TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_stickers_status_updated_at ON stickers(status, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_stickers_sha256 ON stickers(sha256);
+
+  CREATE TABLE IF NOT EXISTS character_stickers (
+    id TEXT PRIMARY KEY,
+    character_id TEXT NOT NULL,
+    sticker_asset_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    created_by_user_id TEXT,
+    updated_by_user_id TEXT,
+    FOREIGN KEY (character_id) REFERENCES character_cards(id),
+    FOREIGN KEY (sticker_asset_id) REFERENCES stickers(id),
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+    FOREIGN KEY (updated_by_user_id) REFERENCES users(id),
+    UNIQUE(character_id, sticker_asset_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_character_stickers_character_status
+    ON character_stickers(character_id, status, updated_at);
+
+  CREATE INDEX IF NOT EXISTS idx_character_stickers_asset
+    ON character_stickers(sticker_asset_id);
+
+  CREATE TABLE IF NOT EXISTS story_logs (
+    id TEXT PRIMARY KEY,
+    worldview TEXT NOT NULL,
+    title TEXT NOT NULL,
+    primary_character TEXT NOT NULL,
+    sequence_number INTEGER NOT NULL,
+    source_filename TEXT NOT NULL,
+    source_label TEXT NOT NULL,
+    record_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    created_by_user_id TEXT,
+    updated_by_user_id TEXT,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+    FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_story_logs_worldview_updated_at ON story_logs(worldview, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_story_logs_created_by_user_id ON story_logs(created_by_user_id);
 
   CREATE TABLE IF NOT EXISTS auth_sessions (
     id TEXT PRIMARY KEY,
@@ -728,6 +803,8 @@ ensureColumn('messages', 'reply_to_speaker_name', 'reply_to_speaker_name TEXT')
 ensureColumn('messages', 'reply_to_body', 'reply_to_body TEXT')
 ensureColumn('messages', 'deleted_at', 'deleted_at INTEGER')
 ensureColumn('messages', 'deleted_by_user_id', 'deleted_by_user_id TEXT')
+ensureColumn('messages', 'sticker_id', 'sticker_id TEXT')
+database.exec('CREATE INDEX IF NOT EXISTS idx_messages_sticker_id ON messages(sticker_id)')
 
 database.exec(`
   UPDATE messages
@@ -1589,6 +1666,7 @@ const statementInsertMessage = database.prepare(`
     deleted_at,
     deleted_by_user_id,
     kind,
+    sticker_id,
     body,
     created_at
   )
@@ -1608,9 +1686,284 @@ const statementInsertMessage = database.prepare(`
     @deletedAt,
     @deletedByUserId,
     @kind,
+    @stickerId,
     @body,
     @createdAt
   )
+`)
+
+const characterStickerSelectColumns = `
+  character_stickers.id,
+  character_stickers.character_id AS characterId,
+  character_stickers.sticker_asset_id AS assetId,
+  character_stickers.name,
+  character_stickers.status,
+  character_stickers.created_at AS createdAt,
+  character_stickers.updated_at AS updatedAt,
+  stickers.mime_type AS mimeType,
+  stickers.width,
+  stickers.height,
+  stickers.size_bytes AS sizeBytes,
+  stickers.sha256,
+  stickers.source,
+  stickers.file_path AS filePath,
+  character_cards.name AS characterName,
+  character_cards.worldview AS characterWorldview,
+  character_cards.user_id AS characterUserId,
+  users.handle AS characterUserHandle,
+  users.display_name AS characterUserDisplayName
+`
+
+const characterStickerJoinClause = `
+  FROM character_stickers
+  JOIN stickers ON stickers.id = character_stickers.sticker_asset_id
+  JOIN character_cards ON character_cards.id = character_stickers.character_id
+  LEFT JOIN users ON users.id = character_cards.user_id
+`
+
+const statementSelectActiveCharacterStickersForUser = database.prepare(`
+  SELECT ${characterStickerSelectColumns}
+  ${characterStickerJoinClause}
+  WHERE character_stickers.character_id = ?
+    AND character_stickers.status = 'active'
+    AND character_cards.user_id = ?
+    AND character_cards.status != 'archived'
+  ORDER BY character_stickers.updated_at DESC, character_stickers.created_at DESC
+`)
+
+const statementSelectAllCharacterStickersForAdmin = database.prepare(`
+  SELECT ${characterStickerSelectColumns}
+  ${characterStickerJoinClause}
+  WHERE character_cards.status != 'archived'
+  ORDER BY character_cards.updated_at DESC, character_stickers.updated_at DESC, character_stickers.created_at DESC
+`)
+
+const statementSelectCharacterStickerById = database.prepare(`
+  SELECT ${characterStickerSelectColumns}
+  ${characterStickerJoinClause}
+  WHERE character_stickers.id = ?
+  LIMIT 1
+`)
+
+const statementSelectActiveCharacterStickerForUser = database.prepare(`
+  SELECT ${characterStickerSelectColumns}
+  ${characterStickerJoinClause}
+  WHERE character_stickers.id = ?
+    AND character_stickers.character_id = ?
+    AND character_stickers.status = 'active'
+    AND character_cards.user_id = ?
+    AND character_cards.status != 'archived'
+  LIMIT 1
+`)
+
+const statementSelectCharacterStickerByAssetForCharacter = database.prepare(`
+  SELECT ${characterStickerSelectColumns}
+  ${characterStickerJoinClause}
+  WHERE character_stickers.character_id = ?
+    AND character_stickers.sticker_asset_id = ?
+  LIMIT 1
+`)
+
+const statementSelectStickerBySha256 = database.prepare(`
+  SELECT
+    id,
+    name,
+    mime_type AS mimeType,
+    width,
+    height,
+    size_bytes AS sizeBytes,
+    sha256,
+    source,
+    status,
+    file_path AS filePath,
+    created_at AS createdAt,
+    updated_at AS updatedAt
+  FROM stickers
+  WHERE sha256 = ?
+  LIMIT 1
+`)
+
+const statementInsertSticker = database.prepare(`
+  INSERT INTO stickers (
+    id,
+    name,
+    mime_type,
+    width,
+    height,
+    size_bytes,
+    sha256,
+    source,
+    status,
+    file_path,
+    created_at,
+    updated_at
+  )
+  VALUES (
+    @id,
+    @name,
+    @mimeType,
+    @width,
+    @height,
+    @sizeBytes,
+    @sha256,
+    @source,
+    @status,
+    @filePath,
+    @createdAt,
+    @updatedAt
+  )
+`)
+
+const statementUpdateStickerUploadByHash = database.prepare(`
+  UPDATE stickers
+  SET name = @name,
+      mime_type = @mimeType,
+      width = @width,
+      height = @height,
+      size_bytes = @sizeBytes,
+      source = @source,
+      status = 'active',
+      file_path = @filePath,
+      updated_at = @updatedAt
+  WHERE sha256 = @sha256
+`)
+
+const statementInsertCharacterSticker = database.prepare(`
+  INSERT INTO character_stickers (
+    id,
+    character_id,
+    sticker_asset_id,
+    name,
+    status,
+    created_at,
+    updated_at,
+    created_by_user_id,
+    updated_by_user_id
+  )
+  VALUES (
+    @id,
+    @characterId,
+    @assetId,
+    @name,
+    @status,
+    @createdAt,
+    @updatedAt,
+    @createdByUserId,
+    @updatedByUserId
+  )
+`)
+
+const statementUpdateCharacterStickerUpload = database.prepare(`
+  UPDATE character_stickers
+  SET name = @name,
+      status = 'active',
+      updated_at = @updatedAt,
+      updated_by_user_id = @updatedByUserId
+  WHERE id = @id
+`)
+
+const statementUpdateCharacterSticker = database.prepare(`
+  UPDATE character_stickers
+  SET name = @name,
+      status = @status,
+      updated_at = @updatedAt,
+      updated_by_user_id = @updatedByUserId
+  WHERE id = @id
+`)
+
+const statementDisableCharacterSticker = database.prepare(`
+  UPDATE character_stickers
+  SET status = 'disabled',
+      updated_at = @updatedAt,
+      updated_by_user_id = @updatedByUserId
+  WHERE id = @id
+`)
+
+const statementSelectStoryLogs = database.prepare(`
+  SELECT
+    id,
+    worldview,
+    title,
+    primary_character AS primaryCharacter,
+    sequence_number AS sequenceNumber,
+    source_filename AS sourceFilename,
+    source_label AS sourceLabel,
+    record_json AS recordJson,
+    created_at AS createdAt,
+    updated_at AS updatedAt,
+    created_by_user_id AS createdByUserId,
+    updated_by_user_id AS updatedByUserId
+  FROM story_logs
+  ORDER BY updated_at DESC, created_at DESC
+`)
+
+const statementSelectStoryLogById = database.prepare(`
+  SELECT
+    id,
+    worldview,
+    title,
+    primary_character AS primaryCharacter,
+    sequence_number AS sequenceNumber,
+    source_filename AS sourceFilename,
+    source_label AS sourceLabel,
+    record_json AS recordJson,
+    created_at AS createdAt,
+    updated_at AS updatedAt,
+    created_by_user_id AS createdByUserId,
+    updated_by_user_id AS updatedByUserId
+  FROM story_logs
+  WHERE id = ?
+  LIMIT 1
+`)
+
+const statementInsertStoryLog = database.prepare(`
+  INSERT INTO story_logs (
+    id,
+    worldview,
+    title,
+    primary_character,
+    sequence_number,
+    source_filename,
+    source_label,
+    record_json,
+    created_at,
+    updated_at,
+    created_by_user_id,
+    updated_by_user_id
+  )
+  VALUES (
+    @id,
+    @worldview,
+    @title,
+    @primaryCharacter,
+    @sequenceNumber,
+    @sourceFilename,
+    @sourceLabel,
+    @recordJson,
+    @createdAt,
+    @updatedAt,
+    @createdByUserId,
+    @updatedByUserId
+  )
+`)
+
+const statementUpdateStoryLog = database.prepare(`
+  UPDATE story_logs
+  SET worldview = @worldview,
+      title = @title,
+      primary_character = @primaryCharacter,
+      sequence_number = @sequenceNumber,
+      source_filename = @sourceFilename,
+      source_label = @sourceLabel,
+      record_json = @recordJson,
+      updated_at = @updatedAt,
+      updated_by_user_id = @updatedByUserId
+  WHERE id = @id
+`)
+
+const statementDeleteStoryLog = database.prepare(`
+  DELETE FROM story_logs
+  WHERE id = ?
 `)
 
 const statementInsertCharacterCard = database.prepare(`
@@ -1952,10 +2305,25 @@ const statementSelectMessagesSince = database.prepare(`
     messages.deleted_at AS deletedAt,
     messages.deleted_by_user_id AS deletedByUserId,
     messages.kind,
+    messages.sticker_id AS stickerId,
+    character_stickers.character_id AS stickerCharacterId,
+    character_stickers.sticker_asset_id AS stickerAssetId,
+    character_stickers.name AS stickerName,
+    stickers.mime_type AS stickerMimeType,
+    stickers.width AS stickerWidth,
+    stickers.height AS stickerHeight,
+    stickers.size_bytes AS stickerSizeBytes,
+    stickers.sha256 AS stickerSha256,
+    stickers.source AS stickerSource,
+    character_stickers.status AS stickerStatus,
+    character_stickers.created_at AS stickerCreatedAt,
+    character_stickers.updated_at AS stickerUpdatedAt,
     messages.body,
     messages.created_at AS createdAt
   FROM messages
   LEFT JOIN sessions ON sessions.id = messages.session_id
+  LEFT JOIN character_stickers ON character_stickers.id = messages.sticker_id
+  LEFT JOIN stickers ON stickers.id = character_stickers.sticker_asset_id
   WHERE messages.room_id = ? AND messages.kind != 'system' AND messages.sequence > ?
   ORDER BY sequence ASC
   LIMIT ?
@@ -1979,6 +2347,19 @@ const statementSelectRecentMessages = database.prepare(`
     recent.deleted_at AS deletedAt,
     recent.deleted_by_user_id AS deletedByUserId,
     recent.kind,
+    recent.sticker_id AS stickerId,
+    character_stickers.character_id AS stickerCharacterId,
+    character_stickers.sticker_asset_id AS stickerAssetId,
+    character_stickers.name AS stickerName,
+    stickers.mime_type AS stickerMimeType,
+    stickers.width AS stickerWidth,
+    stickers.height AS stickerHeight,
+    stickers.size_bytes AS stickerSizeBytes,
+    stickers.sha256 AS stickerSha256,
+    stickers.source AS stickerSource,
+    character_stickers.status AS stickerStatus,
+    character_stickers.created_at AS stickerCreatedAt,
+    character_stickers.updated_at AS stickerUpdatedAt,
     recent.body,
     recent.created_at AS createdAt
   FROM (
@@ -1999,6 +2380,7 @@ const statementSelectRecentMessages = database.prepare(`
       deleted_at,
       deleted_by_user_id,
       kind,
+      sticker_id,
       body,
       created_at
     FROM messages
@@ -2007,6 +2389,8 @@ const statementSelectRecentMessages = database.prepare(`
     LIMIT ?
   ) recent
   LEFT JOIN sessions ON sessions.id = recent.session_id
+  LEFT JOIN character_stickers ON character_stickers.id = recent.sticker_id
+  LEFT JOIN stickers ON stickers.id = character_stickers.sticker_asset_id
   ORDER BY sequence ASC
 `)
 
@@ -2028,10 +2412,25 @@ const statementSelectMessageById = database.prepare(`
     messages.deleted_at AS deletedAt,
     messages.deleted_by_user_id AS deletedByUserId,
     messages.kind,
+    messages.sticker_id AS stickerId,
+    character_stickers.character_id AS stickerCharacterId,
+    character_stickers.sticker_asset_id AS stickerAssetId,
+    character_stickers.name AS stickerName,
+    stickers.mime_type AS stickerMimeType,
+    stickers.width AS stickerWidth,
+    stickers.height AS stickerHeight,
+    stickers.size_bytes AS stickerSizeBytes,
+    stickers.sha256 AS stickerSha256,
+    stickers.source AS stickerSource,
+    character_stickers.status AS stickerStatus,
+    character_stickers.created_at AS stickerCreatedAt,
+    character_stickers.updated_at AS stickerUpdatedAt,
     messages.body,
     messages.created_at AS createdAt
   FROM messages
   LEFT JOIN sessions ON sessions.id = messages.session_id
+  LEFT JOIN character_stickers ON character_stickers.id = messages.sticker_id
+  LEFT JOIN stickers ON stickers.id = character_stickers.sticker_asset_id
   WHERE messages.id = ?
   LIMIT 1
 `)
@@ -2244,6 +2643,319 @@ function readJsonBody(request, maxBytes = 4096) {
       reject(new Error('REQUEST_ERROR'))
     })
   })
+}
+
+function readBinaryBody(request, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let size = 0
+    const chunks = []
+
+    function fail(error) {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      reject(error)
+      request.destroy()
+    }
+
+    request.on('data', (chunk) => {
+      size += chunk.length
+
+      if (size > maxBytes) {
+        fail(new Error('BODY_TOO_LARGE'))
+        return
+      }
+
+      chunks.push(chunk)
+    })
+
+    request.on('end', () => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      resolve(Buffer.concat(chunks))
+    })
+
+    request.on('error', () => {
+      fail(new Error('REQUEST_ERROR'))
+    })
+  })
+}
+
+function readUInt24LE(buffer, offset) {
+  return buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16)
+}
+
+function readPngMetadata(buffer) {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+  if (buffer.length < 33 || !buffer.subarray(0, 8).equals(signature)) {
+    return null
+  }
+
+  if (buffer.toString('ascii', 12, 16) !== 'IHDR') {
+    return null
+  }
+
+  const width = buffer.readUInt32BE(16)
+  const height = buffer.readUInt32BE(20)
+  let offset = 8
+
+  while (offset + 12 <= buffer.length) {
+    const chunkLength = buffer.readUInt32BE(offset)
+    const chunkType = buffer.toString('ascii', offset + 4, offset + 8)
+    const nextOffset = offset + 12 + chunkLength
+
+    if (nextOffset > buffer.length) {
+      return null
+    }
+
+    if (chunkType === 'acTL') {
+      return {
+        animated: true,
+        height,
+        mimeType: 'image/png',
+        width,
+      }
+    }
+
+    if (chunkType === 'IDAT') {
+      break
+    }
+
+    offset = nextOffset
+  }
+
+  return {
+    animated: false,
+    height,
+    mimeType: 'image/png',
+    width,
+  }
+}
+
+function findWebpChunk(buffer, targetType) {
+  let offset = 12
+
+  while (offset + 8 <= buffer.length) {
+    const type = buffer.toString('ascii', offset, offset + 4)
+    const size = buffer.readUInt32LE(offset + 4)
+    const dataOffset = offset + 8
+    const nextOffset = dataOffset + size + (size % 2)
+
+    if (dataOffset + size > buffer.length) {
+      return null
+    }
+
+    if (type === targetType) {
+      return {
+        dataOffset,
+        size,
+      }
+    }
+
+    offset = nextOffset
+  }
+
+  return null
+}
+
+function readWebpMetadata(buffer) {
+  if (
+    buffer.length < 20 ||
+    buffer.toString('ascii', 0, 4) !== 'RIFF' ||
+    buffer.toString('ascii', 8, 12) !== 'WEBP'
+  ) {
+    return null
+  }
+
+  const extended = findWebpChunk(buffer, 'VP8X')
+
+  if (extended) {
+    if (extended.size < 10) {
+      return null
+    }
+
+    const flags = buffer[extended.dataOffset]
+    return {
+      animated: (flags & 0x02) !== 0,
+      height: readUInt24LE(buffer, extended.dataOffset + 7) + 1,
+      mimeType: 'image/webp',
+      width: readUInt24LE(buffer, extended.dataOffset + 4) + 1,
+    }
+  }
+
+  const lossy = findWebpChunk(buffer, 'VP8 ')
+
+  if (lossy) {
+    if (lossy.size < 10) {
+      return null
+    }
+
+    const start = lossy.dataOffset
+
+    if (
+      buffer[start + 3] !== 0x9d ||
+      buffer[start + 4] !== 0x01 ||
+      buffer[start + 5] !== 0x2a
+    ) {
+      return null
+    }
+
+    return {
+      animated: false,
+      height: buffer.readUInt16LE(start + 8) & 0x3fff,
+      mimeType: 'image/webp',
+      width: buffer.readUInt16LE(start + 6) & 0x3fff,
+    }
+  }
+
+  const lossless = findWebpChunk(buffer, 'VP8L')
+
+  if (lossless) {
+    if (lossless.size < 5 || buffer[lossless.dataOffset] !== 0x2f) {
+      return null
+    }
+
+    const start = lossless.dataOffset
+    const b1 = buffer[start + 1]
+    const b2 = buffer[start + 2]
+    const b3 = buffer[start + 3]
+    const b4 = buffer[start + 4]
+
+    return {
+      animated: false,
+      height: ((b2 >> 6) | (b3 << 2) | ((b4 & 0x0f) << 10)) + 1,
+      mimeType: 'image/webp',
+      width: (b1 | ((b2 & 0x3f) << 8)) + 1,
+    }
+  }
+
+  return null
+}
+
+function normaliseStickerName(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_STICKER_NAME_LENGTH)
+}
+
+async function validateStickerImage(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    return {
+      error: '请选择要上传的表情图片。',
+      files: null,
+      image: null,
+    }
+  }
+
+  if (buffer.length > MAX_STICKER_FILE_BYTES) {
+    return {
+      error: '表情图片原始文件不能超过 2MB。',
+      files: null,
+      image: null,
+    }
+  }
+
+  let metadata
+
+  try {
+    metadata = await sharp(buffer, { animated: true }).metadata()
+  } catch {
+    return {
+      error: '仅支持静态 JPG、PNG 或 WebP 表情图片。',
+      files: null,
+      image: null,
+    }
+  }
+
+  if (!metadata || !STICKER_UPLOAD_MIME_TYPES.has(String(metadata.format ?? ''))) {
+    return {
+      error: '仅支持静态 JPG、PNG 或 WebP 表情图片。',
+      files: null,
+      image: null,
+    }
+  }
+
+  if ((metadata.pages ?? 1) > 1) {
+    return {
+      error: '仅支持静态 JPG、PNG 或 WebP 表情图片，请上传非动图。',
+      files: null,
+      image: null,
+    }
+  }
+
+  const width = Number(metadata.width ?? 0)
+  const height = Number(metadata.height ?? 0)
+
+  if (
+    width <= 0 ||
+    height <= 0 ||
+    width > MAX_STICKER_DIMENSION ||
+    height > MAX_STICKER_DIMENSION
+  ) {
+    return {
+      error: '表情图片最长边不能超过 1024px。',
+      files: null,
+      image: null,
+    }
+  }
+
+  try {
+    const masterBuffer = await sharp(buffer)
+      .rotate()
+      .webp({ quality: 82 })
+      .toBuffer()
+    const masterMetadata = await sharp(masterBuffer).metadata()
+    const chatBuffer = await sharp(masterBuffer)
+      .resize({
+        fit: 'inside',
+        height: CHAT_STICKER_MAX_DIMENSION,
+        width: CHAT_STICKER_MAX_DIMENSION,
+        withoutEnlargement: true,
+      })
+      .webp({ quality: 78 })
+      .toBuffer()
+    const chatMetadata = await sharp(chatBuffer).metadata()
+    const thumbBuffer = await sharp(masterBuffer)
+      .resize({
+        fit: 'inside',
+        height: STICKER_THUMB_MAX_DIMENSION,
+        width: STICKER_THUMB_MAX_DIMENSION,
+        withoutEnlargement: true,
+      })
+      .webp({ quality: 72 })
+      .toBuffer()
+    const thumbMetadata = await sharp(thumbBuffer).metadata()
+
+    return {
+      error: null,
+      files: {
+        chat: chatBuffer,
+        master: masterBuffer,
+        thumb: thumbBuffer,
+      },
+      image: {
+        chatHeight: Number(chatMetadata.height ?? 0),
+        chatWidth: Number(chatMetadata.width ?? 0),
+        height: Number(masterMetadata.height ?? 0),
+        mimeType: 'image/webp',
+        sizeBytes: masterBuffer.length,
+        thumbHeight: Number(thumbMetadata.height ?? 0),
+        thumbWidth: Number(thumbMetadata.width ?? 0),
+        width: Number(masterMetadata.width ?? 0),
+      },
+    }
+  } catch {
+    return {
+      error: '表情图片处理失败。',
+      files: null,
+      image: null,
+    }
+  }
 }
 
 function resolveClientIp(request) {
@@ -4397,6 +5109,60 @@ function normalisePresentationMode(value) {
     : CHAT_PRESENTATION_BUBBLE
 }
 
+function serialiseSticker(row) {
+  if (!row) {
+    return null
+  }
+
+  return {
+    assetId: row.assetId ?? null,
+    characterId: row.characterId ?? null,
+    characterName: row.characterName ?? null,
+    characterOwner: row.characterUserId
+      ? {
+          displayName: row.characterUserDisplayName ?? '',
+          handle: row.characterUserHandle ?? '',
+          id: row.characterUserId,
+        }
+      : null,
+    characterWorldview: row.characterWorldview ?? null,
+    createdAt: Number(row.createdAt ?? 0),
+    fileUrl: `/api/stickers/${encodeURIComponent(row.id)}/file`,
+    height: Number(row.height ?? 0),
+    id: row.id,
+    mimeType: row.mimeType,
+    name: row.name,
+    sha256: row.sha256,
+    sizeBytes: Number(row.sizeBytes ?? 0),
+    source: row.source,
+    status: row.status,
+    updatedAt: Number(row.updatedAt ?? 0),
+    width: Number(row.width ?? 0),
+  }
+}
+
+function serialiseStickerFromMessageRow(row) {
+  if (!row.stickerId || !row.stickerName) {
+    return null
+  }
+
+  return serialiseSticker({
+    assetId: row.stickerAssetId,
+    characterId: row.stickerCharacterId,
+    createdAt: row.stickerCreatedAt,
+    height: row.stickerHeight,
+    id: row.stickerId,
+    mimeType: row.stickerMimeType,
+    name: row.stickerName,
+    sha256: row.stickerSha256,
+    sizeBytes: row.stickerSizeBytes,
+    source: row.stickerSource,
+    status: row.stickerStatus,
+    updatedAt: row.stickerUpdatedAt,
+    width: row.stickerWidth,
+  })
+}
+
 function serialiseMessage(row) {
   return {
     body: row.body,
@@ -4417,6 +5183,8 @@ function serialiseMessage(row) {
     speakerCharacterId: row.speakerCharacterId ?? null,
     speakerDisplayMode: normalisePresentationMode(row.speakerDisplayMode),
     speakerName: row.speakerName ?? row.nickname,
+    sticker: serialiseStickerFromMessageRow(row),
+    stickerId: row.stickerId ?? null,
   }
 }
 
@@ -4465,6 +5233,89 @@ function serialiseAuthLoginEvent(row) {
         }
       : null,
   }
+}
+
+function sanitiseStoryLogText(value, maxLength = STORY_LOG_MAX_TEXT_LENGTH) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+function sanitiseStoryLogId(value) {
+  return String(value ?? '').trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80)
+}
+
+function normaliseStoryLogRecord(value) {
+  if (typeof value !== 'object' || value === null) {
+    return {
+      error: '故事日志记录格式无效。',
+      record: null,
+    }
+  }
+
+  const source = value
+  const id = sanitiseStoryLogId(source.id)
+  const worldview = sanitiseStoryLogText(source.worldview, AGE_CHRONICLE_MAX_WORLDVIEW_LENGTH)
+  const title = sanitiseStoryLogText(source.title)
+  const primaryCharacter = sanitiseStoryLogText(source.primaryCharacter, MAX_CHARACTER_NAME_LENGTH)
+  const sequenceNumber = Math.max(1, Math.floor(Number(source.sequenceNumber) || 1))
+  const createdAt = Math.max(0, Math.floor(Number(source.createdAt) || Date.now()))
+  const updatedAt = Math.max(createdAt, Math.floor(Number(source.updatedAt) || Date.now()))
+
+  if (id === '' || worldview === '' || title === '' || primaryCharacter === '') {
+    return {
+      error: '故事日志缺少必要的名称、世界观或角色信息。',
+      record: null,
+    }
+  }
+
+  const record = {
+    ...source,
+    createdAt,
+    id,
+    primaryCharacter,
+    sequenceNumber,
+    sourceFilename: sanitiseStoryLogText(source.sourceFilename, 180) || `${title}.json`,
+    sourceLabel: sanitiseStoryLogText(source.sourceLabel, 80) || '故事日志',
+    title,
+    updatedAt,
+    worldview,
+  }
+  const recordJson = JSON.stringify(record)
+
+  if (recordJson.length > STORY_LOG_MAX_RECORD_JSON_LENGTH) {
+    return {
+      error: '故事日志内容过大，请拆分后再上传。',
+      record: null,
+    }
+  }
+
+  return {
+    error: null,
+    record,
+  }
+}
+
+function serialiseStoryLog(row) {
+  try {
+    const parsed = JSON.parse(row.recordJson)
+    return {
+      ...parsed,
+      createdAt: Number(row.createdAt ?? parsed.createdAt ?? 0),
+      id: row.id,
+      primaryCharacter: row.primaryCharacter,
+      sequenceNumber: Number(row.sequenceNumber ?? parsed.sequenceNumber ?? 1),
+      sourceFilename: row.sourceFilename,
+      sourceLabel: row.sourceLabel,
+      title: row.title,
+      updatedAt: Number(row.updatedAt ?? parsed.updatedAt ?? 0),
+      worldview: row.worldview,
+    }
+  } catch {
+    return null
+  }
+}
+
+function canManageStoryLog(row, authContext) {
+  return authContext?.user.role === 'admin' || row.createdByUserId === authContext?.user.id
 }
 
 function serialiseCharacter(row) {
@@ -4608,6 +5459,14 @@ function createRoomId() {
 
 function createCharacterId() {
   return `character_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
+}
+
+function createStickerAssetId() {
+  return `sticker_asset_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
+}
+
+function createStickerId() {
+  return `sticker_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`
 }
 
 function getCurrentUser(userId) {
@@ -5088,6 +5947,8 @@ function persistMessage({
   speakerCharacterId = null,
   speakerDisplayMode = CHAT_PRESENTATION_BUBBLE,
   speakerName,
+  sticker = null,
+  stickerId = null,
 }) {
   const messageId = crypto.randomUUID()
   const createdAt = Date.now()
@@ -5108,6 +5969,7 @@ function persistMessage({
     deletedByUserId,
     speakerName,
     kind,
+    stickerId,
     body,
     createdAt,
   })
@@ -5131,6 +5993,8 @@ function persistMessage({
     speakerCharacterId,
     speakerDisplayMode,
     speakerName,
+    sticker,
+    stickerId,
   }
 }
 
@@ -5805,6 +6669,104 @@ function handleChatMessage(state, socket, payload) {
   broadcastRooms()
 }
 
+function buildStickerMessageBody(sticker) {
+  const name = normaliseStickerName(sticker?.name) || '表情'
+  return `[表情:${name}]`
+}
+
+function handleChatStickerMessage(state, socket, payload) {
+  if (!state.joined) {
+    sendJson(socket, {
+      message: '请先加入群聊。',
+      type: 'error',
+    })
+    return
+  }
+
+  if (state.userId === '' || state.activeCharacterId === '') {
+    sendJson(socket, {
+      message: '请先选择角色卡，再发送该角色的表情包。',
+      type: 'error',
+    })
+    return
+  }
+
+  const stickerId = String(payload.stickerId ?? '').trim()
+  const stickerRow = stickerId === ''
+    ? null
+    : statementSelectActiveCharacterStickerForUser.get(
+        stickerId,
+        state.activeCharacterId,
+        state.userId,
+      )
+
+  if (!stickerRow) {
+    sendJson(socket, {
+      message: '目标表情不存在、已被停用，或不属于当前角色卡。',
+      type: 'error',
+    })
+    return
+  }
+
+  const speakerSnapshot = resolveActiveSpeakerSnapshot(state)
+  const replySourceMessage = getMessageById(payload.replyToMessageId)
+  const replyToMessageId =
+    replySourceMessage && replySourceMessage.roomId === state.roomId ? replySourceMessage.id : null
+  const replyToSpeakerName =
+    replyToMessageId !== null
+      ? replySourceMessage.speakerName.trim() || replySourceMessage.nickname
+      : null
+  const replyToBody =
+    replyToMessageId !== null
+      ? buildReplyPreviewBody(replySourceMessage.deletedAt === null ? replySourceMessage.body : '该消息已撤回')
+      : null
+  const sticker = serialiseSticker(stickerRow)
+  const message = persistMessage({
+    body: buildStickerMessageBody(stickerRow),
+    kind: 'sticker',
+    nickname: state.nickname,
+    replyToBody,
+    replyToMessageId,
+    replyToSpeakerName,
+    roomId: state.roomId,
+    sessionId: state.sessionId,
+    sticker,
+    stickerId: stickerRow.id,
+    userId: state.userId,
+    ...speakerSnapshot,
+  })
+
+  broadcastToRoom(state.roomId, {
+    message,
+    type: 'message',
+  })
+  broadcastRooms()
+}
+
+function handleChatRecordingStarted(state, socket) {
+  if (!state.joined) {
+    sendJson(socket, {
+      message: '请先加入群聊。',
+      type: 'error',
+    })
+    return
+  }
+
+  const message = persistMessage({
+    body: '你可以跳入这片湖了。',
+    kind: 'system',
+    nickname: '系统',
+    roomId: state.roomId,
+    speakerName: '系统',
+  })
+
+  broadcastToRoom(state.roomId, {
+    message,
+    type: 'message',
+  })
+  broadcastRooms()
+}
+
 function handleRevokeMessage(state, socket, payload) {
   if (!state.joined) {
     sendJson(socket, {
@@ -6147,6 +7109,626 @@ function ensureAuthenticatedApiRequest(request, response, requestUrl) {
     ok: false,
   }, { headers: appendCorsHeaders(request) })
   return false
+}
+
+function resolveStickerFileAbsolutePath(row) {
+  const relativePath = String(row?.filePath ?? '').replace(/\\/g, '/')
+
+  if (!relativePath.startsWith('stickers/')) {
+    return null
+  }
+
+  const absolutePath = path.resolve(dataDirectory, relativePath)
+  const stickerRoot = path.resolve(stickerDirectory)
+
+  if (!absolutePath.startsWith(`${stickerRoot}${path.sep}`)) {
+    return null
+  }
+
+  return absolutePath
+}
+
+function resolveStickerVariantName(value) {
+  return value === STICKER_VARIANT_THUMB ? STICKER_VARIANT_THUMB : STICKER_VARIANT_CHAT
+}
+
+function buildStickerVariantAbsolutePath(absolutePath, variant) {
+  const parsedPath = path.parse(absolutePath)
+
+  if (parsedPath.ext.toLowerCase() !== '.webp') {
+    return absolutePath
+  }
+
+  return path.join(parsedPath.dir, `${parsedPath.name}.${variant}${parsedPath.ext}`)
+}
+
+function resolveStickerVariantFile(row, variant) {
+  const originalPath = resolveStickerFileAbsolutePath(row)
+
+  if (!originalPath) {
+    return null
+  }
+
+  const resolvedVariant = resolveStickerVariantName(variant)
+  const variantPath = buildStickerVariantAbsolutePath(originalPath, resolvedVariant)
+
+  if (variantPath !== originalPath && fs.existsSync(variantPath)) {
+    return variantPath
+  }
+
+  return originalPath
+}
+
+function ensureAdminApiUser(request, response, message = '只有管理员可以管理表情包。') {
+  const authContext = resolveAuthContextFromRequest(request)
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext?.user) {
+    writeJson(response, 401, { message: '请先使用访问密钥登录。', ok: false }, { headers })
+    return null
+  }
+
+  if (!isAdminUser(authContext.user.id)) {
+    writeJson(response, 403, { message, ok: false }, { headers })
+    return null
+  }
+
+  return {
+    authContext,
+    headers,
+  }
+}
+
+function handleStickersGet(request, response, requestUrl) {
+  const headers = appendCorsHeaders(request)
+
+  const authContext = resolveAuthContextFromRequest(request)
+
+  if (!authContext?.user) {
+    writeJson(response, 401, { message: '请先使用访问密钥登录。', ok: false }, { headers })
+    return
+  }
+
+  const characterId = String(requestUrl.searchParams.get('characterId') ?? '').trim()
+
+  if (characterId === '') {
+    writeJson(response, 200, { ok: true, stickers: [] }, { headers })
+    return
+  }
+
+  const character = statementSelectCharacterCardByIdForUser.get(characterId, authContext.user.id)
+
+  if (!character || character.status === 'archived') {
+    writeJson(response, 403, { message: '只能使用当前账号角色卡的表情包。', ok: false }, { headers })
+    return
+  }
+
+  const stickers = statementSelectActiveCharacterStickersForUser
+    .all(characterId, authContext.user.id)
+    .map(serialiseSticker)
+    .filter(Boolean)
+  writeJson(response, 200, { ok: true, stickers }, { headers })
+}
+
+function handleAdminStickersGet(request, response) {
+  const admin = ensureAdminApiUser(request, response)
+
+  if (!admin) {
+    return
+  }
+
+  const stickers = statementSelectAllCharacterStickersForAdmin.all().map(serialiseSticker).filter(Boolean)
+  const characters = statementSelectAllCharacterCardsForAdmin.all().map(serialiseAdminCharacter)
+  writeJson(response, 200, { characters, ok: true, stickers }, { headers: admin.headers })
+}
+
+function handleStickerFileGet(request, response, stickerId, requestUrl) {
+  const headers = appendCorsHeaders(request)
+  const row = statementSelectCharacterStickerById.get(String(stickerId ?? '').trim())
+
+  if (!row) {
+    writeJson(response, 404, { message: '目标表情不存在。', ok: false }, { headers })
+    return
+  }
+
+  const filePath = resolveStickerVariantFile(row, requestUrl.searchParams.get('variant'))
+
+  if (!filePath || !fs.existsSync(filePath)) {
+    writeJson(response, 404, { message: '表情图片文件不存在。', ok: false }, { headers })
+    return
+  }
+
+  const stat = fs.statSync(filePath)
+  const variantName = resolveStickerVariantName(requestUrl.searchParams.get('variant'))
+  const etag = `"${row.sha256}-${variantName}-${stat.size}"`
+
+  if (request.headers['if-none-match'] === etag) {
+    response.writeHead(304, {
+      ...headers,
+      'Cache-Control': 'private, max-age=31536000, immutable',
+      ETag: etag,
+    })
+    response.end()
+    return
+  }
+
+  response.writeHead(200, {
+    ...headers,
+    'Cache-Control': 'private, max-age=31536000, immutable',
+    'Content-Length': stat.size,
+    'Content-Type': row.mimeType,
+    ETag: etag,
+    'X-Content-Type-Options': 'nosniff',
+  })
+  fs.createReadStream(filePath).pipe(response)
+}
+
+async function handleAdminStickerUpload(request, response, requestUrl) {
+  const admin = ensureAdminApiUser(request, response)
+
+  if (!admin) {
+    return
+  }
+
+  const characterId = String(requestUrl.searchParams.get('characterId') ?? '').trim()
+  const character = statementSelectCharacterCardById.get(characterId)
+
+  if (!character || character.status === 'archived') {
+    writeJson(response, 400, { message: '请选择要归属的角色卡。', ok: false }, { headers: admin.headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readBinaryBody(request, MAX_STICKER_FILE_BYTES + 1)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '表情图片原始文件不能超过 2MB。'
+      : '表情图片读取失败。'
+    writeJson(response, 400, { message, ok: false }, { headers: admin.headers })
+    return
+  }
+
+  const result = await validateStickerImage(body)
+
+  if (!result.image || !result.files) {
+    writeJson(response, 400, { message: result.error ?? '表情图片格式无效。', ok: false }, { headers: admin.headers })
+    return
+  }
+
+  const name = normaliseStickerName(requestUrl.searchParams.get('name')) || '未命名表情'
+  const sha256 = crypto.createHash('sha256').update(result.files.master).digest('hex')
+  const extension = 'webp'
+  const relativeFilePath = `stickers/${sha256}.${extension}`
+  const absoluteFilePath = path.join(stickerDirectory, `${sha256}.${extension}`)
+  const absoluteChatFilePath = path.join(stickerDirectory, `${sha256}.${STICKER_VARIANT_CHAT}.${extension}`)
+  const absoluteThumbFilePath = path.join(stickerDirectory, `${sha256}.${STICKER_VARIANT_THUMB}.${extension}`)
+  const now = Date.now()
+
+  try {
+    if (!fs.existsSync(absoluteFilePath)) {
+      fs.writeFileSync(absoluteFilePath, result.files.master)
+    }
+
+    if (!fs.existsSync(absoluteChatFilePath)) {
+      fs.writeFileSync(absoluteChatFilePath, result.files.chat)
+    }
+
+    if (!fs.existsSync(absoluteThumbFilePath)) {
+      fs.writeFileSync(absoluteThumbFilePath, result.files.thumb)
+    }
+
+    const existingAsset = statementSelectStickerBySha256.get(sha256)
+
+    let assetId = existingAsset?.id ?? ''
+
+    if (existingAsset) {
+      statementUpdateStickerUploadByHash.run({
+        filePath: relativeFilePath,
+        height: result.image.height,
+        mimeType: result.image.mimeType,
+        name,
+        sha256,
+        sizeBytes: result.image.sizeBytes,
+        source: 'admin-upload',
+        updatedAt: now,
+        width: result.image.width,
+      })
+    } else {
+      assetId = createStickerAssetId()
+      statementInsertSticker.run({
+        createdAt: now,
+        filePath: relativeFilePath,
+        height: result.image.height,
+        id: assetId,
+        mimeType: result.image.mimeType,
+        name,
+        sha256,
+        sizeBytes: result.image.sizeBytes,
+        source: 'admin-upload',
+        status: 'active',
+        updatedAt: now,
+        width: result.image.width,
+      })
+    }
+
+    const existingCharacterSticker = statementSelectCharacterStickerByAssetForCharacter.get(
+      character.id,
+      assetId,
+    )
+
+    if (existingCharacterSticker) {
+      statementUpdateCharacterStickerUpload.run({
+        id: existingCharacterSticker.id,
+        name,
+        updatedAt: now,
+        updatedByUserId: admin.authContext.user.id,
+      })
+      const sticker = serialiseSticker(statementSelectCharacterStickerById.get(existingCharacterSticker.id))
+      writeJson(response, 200, { ok: true, sticker }, { headers: admin.headers })
+      return
+    }
+
+    const stickerId = createStickerId()
+
+    statementInsertCharacterSticker.run({
+      assetId,
+      characterId: character.id,
+      createdAt: now,
+      createdByUserId: admin.authContext.user.id,
+      id: stickerId,
+      name,
+      status: 'active',
+      updatedAt: now,
+      updatedByUserId: admin.authContext.user.id,
+    })
+
+    const sticker = serialiseSticker(statementSelectCharacterStickerById.get(stickerId))
+    writeJson(response, 200, { ok: true, sticker }, { headers: admin.headers })
+  } catch (error) {
+    console.error('表情包上传失败:', error)
+    writeJson(response, 500, { message: '表情包保存失败。', ok: false }, { headers: admin.headers })
+  }
+}
+
+async function handleAdminStickerUpdate(request, response, stickerId) {
+  const admin = ensureAdminApiUser(request, response)
+
+  if (!admin) {
+    return
+  }
+
+  const row = statementSelectCharacterStickerById.get(String(stickerId ?? '').trim())
+
+  if (!row) {
+    writeJson(response, 404, { message: '目标表情不存在。', ok: false }, { headers: admin.headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 16 * 1024)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '表情包信息过大。'
+      : '表情包信息格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers: admin.headers })
+    return
+  }
+
+  const name = normaliseStickerName(body?.name) || row.name
+  const status = body?.status === 'disabled' ? 'disabled' : 'active'
+
+  statementUpdateCharacterSticker.run({
+    id: row.id,
+    name,
+    status,
+    updatedAt: Date.now(),
+    updatedByUserId: admin.authContext.user.id,
+  })
+
+  const sticker = serialiseSticker(statementSelectCharacterStickerById.get(row.id))
+  writeJson(response, 200, { ok: true, sticker }, { headers: admin.headers })
+}
+
+function handleAdminStickerDelete(request, response, stickerId) {
+  const admin = ensureAdminApiUser(request, response)
+
+  if (!admin) {
+    return
+  }
+
+  const row = statementSelectCharacterStickerById.get(String(stickerId ?? '').trim())
+
+  if (!row) {
+    writeJson(response, 404, { message: '目标表情不存在。', ok: false }, { headers: admin.headers })
+    return
+  }
+
+  statementDisableCharacterSticker.run({
+    id: row.id,
+    updatedAt: Date.now(),
+    updatedByUserId: admin.authContext.user.id,
+  })
+
+  const sticker = serialiseSticker(statementSelectCharacterStickerById.get(row.id))
+  writeJson(response, 200, { ok: true, sticker }, { headers: admin.headers })
+}
+
+function normaliseStringList(value, maxItems = 200) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return [...new Set(
+    value
+      .map((item) => String(item ?? '').trim())
+      .filter(Boolean),
+  )].slice(0, maxItems)
+}
+
+async function handleAdminStickerCopy(request, response) {
+  const admin = ensureAdminApiUser(request, response)
+
+  if (!admin) {
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 64 * 1024)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '复制请求内容过大。'
+      : '复制请求格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers: admin.headers })
+    return
+  }
+
+  const stickerIds = normaliseStringList(body?.stickerIds, 500)
+  const targetCharacterIds = normaliseStringList(body?.targetCharacterIds, 200)
+
+  if (stickerIds.length === 0) {
+    writeJson(response, 400, { message: '请选择要复制的表情包。', ok: false }, { headers: admin.headers })
+    return
+  }
+
+  if (targetCharacterIds.length === 0) {
+    writeJson(response, 400, { message: '请选择要复制到的角色卡。', ok: false }, { headers: admin.headers })
+    return
+  }
+
+  const now = Date.now()
+  let createdCount = 0
+  let updatedCount = 0
+
+  try {
+    const copyTransaction = database.transaction(() => {
+      for (const stickerId of stickerIds) {
+        const sourceSticker = statementSelectCharacterStickerById.get(stickerId)
+
+        if (!sourceSticker) {
+          continue
+        }
+
+        for (const characterId of targetCharacterIds) {
+          if (characterId === sourceSticker.characterId) {
+            continue
+          }
+
+          const character = statementSelectCharacterCardById.get(characterId)
+
+          if (!character || character.status === 'archived') {
+            continue
+          }
+
+          const existing = statementSelectCharacterStickerByAssetForCharacter.get(
+            character.id,
+            sourceSticker.assetId,
+          )
+
+          if (existing) {
+            statementUpdateCharacterStickerUpload.run({
+              id: existing.id,
+              name: sourceSticker.name,
+              updatedAt: now,
+              updatedByUserId: admin.authContext.user.id,
+            })
+            updatedCount += 1
+            continue
+          }
+
+          statementInsertCharacterSticker.run({
+            assetId: sourceSticker.assetId,
+            characterId: character.id,
+            createdAt: now,
+            createdByUserId: admin.authContext.user.id,
+            id: createStickerId(),
+            name: sourceSticker.name,
+            status: 'active',
+            updatedAt: now,
+            updatedByUserId: admin.authContext.user.id,
+          })
+          createdCount += 1
+        }
+      }
+    })
+
+    copyTransaction()
+
+    const stickers = statementSelectAllCharacterStickersForAdmin.all().map(serialiseSticker).filter(Boolean)
+    writeJson(response, 200, {
+      copied: createdCount + updatedCount,
+      createdCount,
+      ok: true,
+      stickers,
+      updatedCount,
+    }, { headers: admin.headers })
+  } catch (error) {
+    console.error('表情包复制失败:', error)
+    writeJson(response, 500, { message: '表情包复制失败。', ok: false }, { headers: admin.headers })
+  }
+}
+
+function handleStoryLogsGet(request, response) {
+  const headers = appendCorsHeaders(request)
+
+  try {
+    writeJson(response, 200, {
+      ok: true,
+      records: statementSelectStoryLogs.all().map(serialiseStoryLog).filter(Boolean),
+    }, { headers })
+  } catch (error) {
+    writeJson(response, 500, { message: String(error), ok: false }, { headers })
+  }
+}
+
+async function handleStoryLogCreate(request, response) {
+  const headers = appendCorsHeaders(request)
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '上传故事日志需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, STORY_LOG_MAX_RECORD_JSON_LENGTH + 32 * 1024)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '故事日志内容过大，请拆分后再上传。'
+      : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const result = normaliseStoryLogRecord(body?.record)
+
+  if (result.error || !result.record) {
+    writeJson(response, 400, { message: result.error ?? '故事日志记录格式无效。', ok: false }, { headers })
+    return
+  }
+
+  if (statementSelectStoryLogById.get(result.record.id)) {
+    writeJson(response, 409, { message: '已存在同 ID 的故事日志。', ok: false }, { headers })
+    return
+  }
+
+  const now = Date.now()
+  const record = {
+    ...result.record,
+    createdAt: result.record.createdAt || now,
+    updatedAt: now,
+  }
+
+  statementInsertStoryLog.run({
+    createdAt: record.createdAt,
+    createdByUserId: authContext.user.id,
+    id: record.id,
+    primaryCharacter: record.primaryCharacter,
+    recordJson: JSON.stringify(record),
+    sequenceNumber: record.sequenceNumber,
+    sourceFilename: record.sourceFilename,
+    sourceLabel: record.sourceLabel,
+    title: record.title,
+    updatedAt: record.updatedAt,
+    updatedByUserId: authContext.user.id,
+    worldview: record.worldview,
+  })
+
+  writeJson(response, 200, { ok: true, record }, { headers })
+}
+
+async function handleStoryLogUpdate(request, response, storyLogId) {
+  const headers = appendCorsHeaders(request)
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '保存故事日志需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  const existing = statementSelectStoryLogById.get(storyLogId)
+
+  if (!existing) {
+    writeJson(response, 404, { message: '目标故事日志不存在。', ok: false }, { headers })
+    return
+  }
+
+  if (!canManageStoryLog(existing, authContext)) {
+    writeJson(response, 403, { message: '只有创建者或管理员可以修改这份故事日志。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, STORY_LOG_MAX_RECORD_JSON_LENGTH + 32 * 1024)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '故事日志内容过大，请拆分后再上传。'
+      : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const result = normaliseStoryLogRecord({ ...body?.record, id: storyLogId })
+
+  if (result.error || !result.record) {
+    writeJson(response, 400, { message: result.error ?? '故事日志记录格式无效。', ok: false }, { headers })
+    return
+  }
+
+  const record = {
+    ...result.record,
+    createdAt: Number(existing.createdAt ?? result.record.createdAt),
+    updatedAt: Date.now(),
+  }
+
+  statementUpdateStoryLog.run({
+    id: record.id,
+    primaryCharacter: record.primaryCharacter,
+    recordJson: JSON.stringify(record),
+    sequenceNumber: record.sequenceNumber,
+    sourceFilename: record.sourceFilename,
+    sourceLabel: record.sourceLabel,
+    title: record.title,
+    updatedAt: record.updatedAt,
+    updatedByUserId: authContext.user.id,
+    worldview: record.worldview,
+  })
+
+  writeJson(response, 200, { ok: true, record }, { headers })
+}
+
+function handleStoryLogDelete(request, response, storyLogId) {
+  const headers = appendCorsHeaders(request)
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+
+  if (!authContext) {
+    writeJson(response, 401, { message: '删除故事日志需要先登录。', ok: false }, { headers })
+    return
+  }
+
+  const existing = statementSelectStoryLogById.get(storyLogId)
+
+  if (!existing) {
+    writeJson(response, 404, { message: '目标故事日志不存在。', ok: false }, { headers })
+    return
+  }
+
+  if (!canManageStoryLog(existing, authContext)) {
+    writeJson(response, 403, { message: '只有创建者或管理员可以删除这份故事日志。', ok: false }, { headers })
+    return
+  }
+
+  statementDeleteStoryLog.run(storyLogId)
+  writeJson(response, 200, { ok: true }, { headers })
 }
 
 function handleWorldviewsGet(request, response) {
@@ -7380,6 +8962,67 @@ const server = http.createServer((request, response) => {
     return
   }
 
+  if (request.method === 'GET' && requestUrl.pathname === '/api/stickers') {
+    handleStickersGet(request, response, requestUrl)
+    return
+  }
+
+  if (request.method === 'GET' && requestUrl.pathname === '/api/admin/stickers') {
+    handleAdminStickersGet(request, response)
+    return
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/admin/stickers') {
+    void handleAdminStickerUpload(request, response, requestUrl)
+    return
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/admin/stickers/copy') {
+    void handleAdminStickerCopy(request, response)
+    return
+  }
+
+  const stickerFileMatch = /^\/api\/stickers\/([^/]+)\/file$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'GET' && stickerFileMatch) {
+    handleStickerFileGet(request, response, decodeURIComponent(stickerFileMatch[1]), requestUrl)
+    return
+  }
+
+  const adminStickerMatch = /^\/api\/admin\/stickers\/([^/]+)$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PATCH' && adminStickerMatch) {
+    void handleAdminStickerUpdate(request, response, decodeURIComponent(adminStickerMatch[1]))
+    return
+  }
+
+  if (request.method === 'DELETE' && adminStickerMatch) {
+    handleAdminStickerDelete(request, response, decodeURIComponent(adminStickerMatch[1]))
+    return
+  }
+
+  if (request.method === 'GET' && requestUrl.pathname === '/api/story-logs') {
+    handleStoryLogsGet(request, response)
+    return
+  }
+
+  if (request.method === 'POST' && requestUrl.pathname === '/api/story-logs') {
+    void handleStoryLogCreate(request, response)
+    return
+  }
+
+  const storyLogMatch = /^\/api\/story-logs\/([^/]+)$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PUT' && storyLogMatch) {
+    void handleStoryLogUpdate(request, response, decodeURIComponent(storyLogMatch[1]))
+    return
+  }
+
+  if (request.method === 'DELETE' && storyLogMatch) {
+    handleStoryLogDelete(request, response, decodeURIComponent(storyLogMatch[1]))
+    return
+  }
+
   if (request.method === 'GET' && requestUrl.pathname === '/api/worldviews') {
     handleWorldviewsGet(request, response)
     return
@@ -7538,6 +9181,9 @@ const server = http.createServer((request, response) => {
         authAccessKey: '/api/auth/access-key',
         authMe: '/api/auth/me',
         health: '/api/health',
+        adminStickers: '/api/admin/stickers',
+        stickers: '/api/stickers',
+        storyLogs: '/api/story-logs',
         verticalTimelineEvents: '/api/vertical-timeline/events',
         verticalTimelineLanes: '/api/vertical-timeline/lanes',
         verticalTimelineState: '/api/vertical-timeline/state',
@@ -7619,6 +9265,16 @@ websocketServer.on('connection', (socket, request) => {
 
     if (payload.type === 'send_message') {
       handleChatMessage(state, socket, payload)
+      return
+    }
+
+    if (payload.type === 'send_sticker') {
+      handleChatStickerMessage(state, socket, payload)
+      return
+    }
+
+    if (payload.type === 'recording_started') {
+      handleChatRecordingStarted(state, socket)
       return
     }
 

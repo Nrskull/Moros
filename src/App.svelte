@@ -9,6 +9,7 @@
   } from './content/worldviews'
   import AgeChroniclePage from './lib/AgeChroniclePage.svelte'
   import AdminCharacterPage from './lib/AdminCharacterPage.svelte'
+  import AdminStickerPage from './lib/AdminStickerPage.svelte'
   import CharacterSheetPage from './lib/CharacterSheetPage.svelte'
   import ChatRoomPage from './lib/ChatRoomPage.svelte'
   import EventDetailPage from './lib/EventDetailPage.svelte'
@@ -935,6 +936,14 @@
     }
   }
 
+  function clearUserAgreementAcceptance(): void {
+    hasAcceptedUserAgreement = false
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(USER_AGREEMENT_STORAGE_KEY)
+    }
+  }
+
   async function loadUserAgreement(): Promise<void> {
     isUserAgreementLoading = true
     userAgreementError = ''
@@ -1061,7 +1070,7 @@
       return 'vertical-timeline'
     }
 
-    if (page === 'admin-character' || page === 'admin-worldview') {
+    if (page === 'admin-character' || page === 'admin-sticker' || page === 'admin-worldview') {
       return 'chat-room'
     }
 
@@ -1108,6 +1117,7 @@
       }
 
       chatAuthUser = null
+      clearUserAgreementAcceptance()
       clearStoredChatIdentity()
       chatLogoutSerial += 1
       navigateToPage('chat-room')
@@ -1158,7 +1168,7 @@
   }
 
   function pageUsesWorldview(page: AppPage): boolean {
-    return !['home', 'chat-room', 'admin-character', 'admin-worldview', 'tools-overview', 'character-sheet'].includes(
+    return !['home', 'chat-room', 'admin-character', 'admin-sticker', 'admin-worldview', 'tools-overview', 'character-sheet'].includes(
       normaliseVisiblePage(page),
     )
   }
@@ -2107,6 +2117,10 @@
               <strong>角色后台</strong>
               <span>统一进入角色卡后台，不再从群聊侧栏分散进入。</span>
             </button>
+            <button class="worldview-dropdown-item" type="button" onclick={() => navigateToPage('admin-sticker')}>
+              <strong>表情包管理</strong>
+              <span>上传、改名和停用群聊表情包。</span>
+            </button>
             <button class="worldview-dropdown-item" type="button" onclick={openWorldviewManager}>
               <strong>世界观管理</strong>
               <span>新建世界观，或对已有世界观执行重命名与元数据维护。</span>
@@ -2543,6 +2557,8 @@
       />
     {:else if activePage === 'admin-character'}
       <AdminCharacterPage worldviewOptions={worldviewOptions} />
+    {:else if activePage === 'admin-sticker'}
+      <AdminStickerPage worldviewOptions={worldviewOptions} />
     {:else if activePage === 'admin-worldview'}
       <WorldviewAdminPage
         managedWorldviews={managedWorldviews}
@@ -2598,6 +2614,17 @@
             >
               <strong>角色后台</strong>
               <span>查看、筛选和维护全部角色卡。</span>
+            </button>
+            <button
+              class="worldview-dropdown-item"
+              type="button"
+              onclick={() => {
+                closeDrawer()
+                navigateToPage('admin-sticker')
+              }}
+            >
+              <strong>表情包管理</strong>
+              <span>上传、改名和停用群聊表情包。</span>
             </button>
             <button class="worldview-dropdown-item" type="button" onclick={openWorldviewManager}>
               <strong>世界观管理</strong>

@@ -3,6 +3,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { worldviewContents } from '../content/worldviews'
+  import AdminCharacterSidebar from './AdminCharacterSidebar.svelte'
   import { buildChatHttpUrl, type ChatCharacterAttributes, type ChatCharacterCard, type ChatUser } from './chat-room'
   import { confirmDialog } from './dialog'
 
@@ -296,6 +297,22 @@
     window.history.pushState({}, '', '/chat')
     window.dispatchEvent(new PopStateEvent('popstate'))
   }
+
+  function handleSidebarFilterChange(
+    event: CustomEvent<{ filterUserId: string; filterWorldview: string }>,
+  ): void {
+    filterUserId = event.detail.filterUserId
+    filterWorldview = event.detail.filterWorldview
+    void fetchCharacters()
+  }
+
+  function handleSidebarCharacterSelect(event: CustomEvent<{ characterId: string }>): void {
+    const character = characters.find((entry) => entry.id === event.detail.characterId)
+
+    if (character) {
+      populateForm(character)
+    }
+  }
 </script>
 
 <div class="admin-page">
@@ -316,52 +333,17 @@
     <div class="status-card">{statusMessage}</div>
   {:else}
     <div class="admin-layout">
-      <aside class="admin-sidebar">
-        <div class="filter-card">
-          <label>
-            <span>按用户筛选</span>
-            <select bind:value={filterUserId} onchange={() => void fetchCharacters()}>
-              <option value="">全部用户</option>
-              {#each users as user}
-                <option value={user.id}>{user.displayName} · {user.handle}</option>
-              {/each}
-            </select>
-          </label>
-
-          <label>
-            <span>按世界观筛选</span>
-            <select bind:value={filterWorldview} onchange={() => void fetchCharacters()}>
-              <option value="">全部世界观</option>
-              {#each availableWorldviewOptions as worldview}
-                <option value={worldview}>{worldview}</option>
-              {/each}
-            </select>
-          </label>
-        </div>
-
-        <div class="list-card">
-          <div class="list-head">
-            <strong>角色列表</strong>
-            <span>{visibleCharacters.length} 张</span>
-          </div>
-
-          {#if statusMessage !== ''}
-            <div class="status-inline">{statusMessage}</div>
-          {/if}
-
-          <div class="character-list">
-            {#each visibleCharacters as character (character.id)}
-              <button class:selected={editingCharacterId === character.id} class="character-item" onclick={() => populateForm(character)} type="button">
-                <span class="character-color" style={`background:${character.color};`}></span>
-                <div>
-                  <strong>{character.name}</strong>
-                  <span>{character.worldview} · {character.user.displayName}</span>
-                </div>
-              </button>
-            {/each}
-          </div>
-        </div>
-      </aside>
+      <AdminCharacterSidebar
+        characters={visibleCharacters}
+        filterUserId={filterUserId}
+        filterWorldview={filterWorldview}
+        on:filterchange={handleSidebarFilterChange}
+        on:selectcharacter={handleSidebarCharacterSelect}
+        selectedCharacterId={editingCharacterId}
+        statusMessage={statusMessage}
+        users={users}
+        worldviewOptions={availableWorldviewOptions}
+      />
 
       <section class="editor-card">
         <div class="editor-head">
@@ -454,7 +436,6 @@
 
   .header,
   .editor-head,
-  .list-head,
   .actions {
     display: flex;
     align-items: center;
@@ -476,10 +457,7 @@
     margin-top: 20px;
   }
 
-  .admin-sidebar,
   .editor-card,
-  .filter-card,
-  .list-card,
   .status-card {
     border: 1px solid var(--line);
     border-radius: 20px;
@@ -487,25 +465,12 @@
     box-shadow: var(--card-shadow);
   }
 
-  .filter-card,
-  .list-card,
   .editor-card,
   .status-card {
     padding: 18px;
   }
 
-  .admin-sidebar {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    border: none;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .editor-form,
-  .filter-card,
-  .character-list {
+  .editor-form {
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -539,8 +504,7 @@
 
   input,
   select,
-  textarea,
-  .character-item {
+  textarea {
     border: 1px solid var(--line);
     border-radius: 14px;
     padding: 10px 12px;
@@ -549,31 +513,6 @@
     color: inherit;
   }
 
-  .character-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .character-item.selected {
-    border-color: var(--accent-border-strong);
-    background: var(--accent-surface);
-  }
-
-  .character-item span {
-    display: block;
-    font-size: 12px;
-    color: var(--muted);
-  }
-
-  .character-color {
-    width: 14px;
-    height: 14px;
-    border-radius: 999px;
-    flex-shrink: 0;
-  }
 
   .danger-button {
     border: 1px solid rgba(239, 68, 68, 0.35);
@@ -585,7 +524,6 @@
   }
 
   .error-text,
-  .status-inline,
   .status-card {
     color: #991b1b;
   }

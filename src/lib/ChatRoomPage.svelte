@@ -18,9 +18,21 @@
     type ChatMember,
     type ChatMessage,
     type ChatRoom,
+    type ChatSticker,
     type ChatUser,
   } from './chat-room'
   import { confirmDialog } from './dialog'
+  import {
+    detectCqImageMessage,
+    detectOocMessage,
+    detectStickerPlaceholderMessage,
+    ensureCharacterColors,
+    normaliseLogNickname,
+    stripReplyPrefixFromLogMessage,
+    type EditableLogEntry,
+    type SealDiceStandardLog,
+  } from './log-workbench'
+  import { createStoryLogRecord, type StoredLogRecord } from './story-logs'
 
   type AttributeKey = keyof ChatCharacterAttributes
 
@@ -90,6 +102,15 @@
     type: 'room_history_cleared'
   }
 
+  interface ChatRecordingState {
+    roomId: string
+    roomName: string
+    startedAt: number
+    startSequence: number
+    title: string
+    worldview: string
+  }
+
   interface ChatSystemRenderItem {
     body: string
     createdAt: number
@@ -138,6 +159,12 @@
     retryAfterMs?: number
   }
 
+  interface ChatStickerResponse {
+    message?: string
+    ok: boolean
+    stickers?: ChatSticker[]
+  }
+
   interface ChatMobileMenuItem {
     action: () => Promise<void> | void
     current?: boolean
@@ -181,6 +208,8 @@
   let composerTextareaElement: HTMLTextAreaElement | null = null
   let messageActionMenuElement: HTMLDivElement | null = null
   let messageViewportElement: HTMLDivElement | null = null
+  let recordMenuElement: HTMLDivElement | null = null
+  let stickerMenuElement: HTMLDivElement | null = null
 
   let socket: WebSocket | null = null
   let socketSerial = 0
@@ -208,6 +237,10 @@
   let members: ChatMember[] = []
   let manageableUsers: ChatUser[] = []
   let roomPermissions: ChatRoomPermission[] = []
+  let stickers: ChatSticker[] = []
+  let isStickerPickerOpen = false
+  let isStickerLoading = false
+  let stickerError = ''
   let replyTarget: ChatMessage | null = null
   let unreadIncomingCount = 0
   let isAuthPromptOpen = false
@@ -220,6 +253,13 @@
   let roomPermissionsRoomId = ''
   let roomPermissionsDraftUserIds: string[] = []
   let roomPermissionsError = ''
+  let isRecordMenuOpen = false
+  let isRecordPromptOpen = false
+  let recordNameDraft = ''
+  let recordWorldviewDraft = STATIC_DEFAULT_CHARACTER_WORLDVIEW
+  let recordError = ''
+  let activeRecording: ChatRecordingState | null = null
+  let isRecordEnding = false
   let isCreateCharacterPromptOpen = false
   let createCharacterNameDraft = ''
   let createCharacterWorldviewDraft = STATIC_DEFAULT_CHARACTER_WORLDVIEW
@@ -268,6 +308,7 @@
   let messageLongPressStartX = 0
   let messageLongPressStartY = 0
   let handledAuthResetKey = authResetKey
+  let handledStickerCharacterId = ''
 
   $: avatarCropViewportSize =
     avatarCropSurfaceWidth > 0 ? avatarCropSurfaceWidth : AVATAR_CROP_VIEWPORT_SIZE
@@ -366,6 +407,9 @@
   }
   $: if (editCharacterWorldviewDraft !== '' && !availableCharacterWorldviews.includes(editCharacterWorldviewDraft)) {
     editCharacterWorldviewDraft = defaultCharacterWorldview
+  }
+  $: if (recordWorldviewDraft !== '' && !availableCharacterWorldviews.includes(recordWorldviewDraft)) {
+    recordWorldviewDraft = defaultCharacterWorldview
   }
 
   function getAllowedUserIdsForRoom(roomId: string, entries: ChatRoomPermission[] = roomPermissions): string[] {
@@ -961,7 +1005,7 @@
         continue
       }
 
-      if (getMessageDisplayMode(message) === 'kp-narration') {
+      if (message.kind !== 'sticker' && getMessageDisplayMode(message) === 'kp-narration') {
         activeGroup = null
         nextItems.push({
           body: message.body,
@@ -1041,6 +1085,65 @@
     return {
       ...payload,
       ok: true,
+    }
+  }
+
+  async function requestStickerApi(pathname: string, init?: RequestInit): Promise<ChatStickerResponse> {
+    const headers = new Headers(init?.headers ?? {})
+
+    if (init?.body && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
+
+    const response = await fetch(buildChatHttpUrl(pathname), {
+      ...init,
+      credentials: 'include',
+      headers,
+    })
+
+    let payload: ChatStickerResponse = { ok: response.ok }
+
+    try {
+      payload = (await response.json()) as ChatStickerResponse
+    } catch {
+      payload = {
+        message: '表情包服务返回了无法解析的响应。',
+        ok: false,
+      }
+    }
+
+    return {
+      ...payload,
+      ok: response.ok && payload.ok !== false,
+    }
+  }
+
+  async function refreshStickers(): Promise<void> {
+    if (!currentUser || !activeCharacterId) {
+      stickers = []
+      stickerError = ''
+      return
+    }
+
+    isStickerLoading = true
+    stickerError = ''
+
+    try {
+      const payload = await requestStickerApi(
+        `/stickers?characterId=${encodeURIComponent(activeCharacterId)}`,
+        { method: 'GET' },
+      )
+
+      if (!payload.ok) {
+        stickerError = payload.message ?? '表情包加载失败。'
+        return
+      }
+
+      stickers = payload.stickers ?? []
+    } catch {
+      stickerError = '表情包服务暂时不可用。'
+    } finally {
+      isStickerLoading = false
     }
   }
 
@@ -1363,6 +1466,14 @@
     if (messageActionMenuMessage && messageActionMenuElement && !messageActionMenuElement.contains(target)) {
       closeMessageActionMenu()
     }
+
+    if (isRecordMenuOpen && recordMenuElement && !recordMenuElement.contains(target)) {
+      isRecordMenuOpen = false
+    }
+
+    if (isStickerPickerOpen && stickerMenuElement && !stickerMenuElement.contains(target)) {
+      isStickerPickerOpen = false
+    }
   }
 
   async function restoreAuthSession(): Promise<boolean> {
@@ -1380,6 +1491,7 @@
 
       setCurrentUser(payload.currentUser)
       authError = ''
+      void refreshStickers()
       return true
     } catch {
       authError = '身份校验失败，请确认聊天服务已启动。'
@@ -1418,6 +1530,7 @@
       }
 
       setCurrentUser(payload.currentUser)
+      void refreshStickers()
       nickname = resolveChatNicknameFromUser(payload.currentUser)
       manageableUsers = []
       roomPermissions = []
@@ -1477,6 +1590,17 @@
     members = []
     manageableUsers = []
     roomPermissions = []
+    stickers = []
+    isStickerPickerOpen = false
+    stickerError = ''
+    handledStickerCharacterId = ''
+    isRecordMenuOpen = false
+    isRecordPromptOpen = false
+    recordNameDraft = ''
+    recordWorldviewDraft = defaultCharacterWorldview
+    recordError = ''
+    activeRecording = null
+    isRecordEnding = false
     replyTarget = null
     unreadIncomingCount = 0
     isCharacterMenuOpen = false
@@ -1496,6 +1620,8 @@
       nickname = ''
       manageableUsers = []
       roomPermissions = []
+      stickers = []
+      isStickerPickerOpen = false
       connectionState = 'disconnected'
       connectionError = payload.message
       isAuthPromptOpen = true
@@ -1744,6 +1870,7 @@
   function openCreateCharacterPrompt(): void {
     closeMobileDrawers()
     isCharacterMenuOpen = false
+    isRecordMenuOpen = false
     isEditCharacterPromptOpen = false
     closeCharacterEditorOnNextState = false
     clearCreateCharacterAvatar()
@@ -1758,6 +1885,7 @@
   function openEditCharacterPrompt(character: ChatCharacterCard): void {
     closeMobileDrawers()
     isCharacterMenuOpen = false
+    isRecordMenuOpen = false
     isCreateCharacterPromptOpen = false
     closeCharacterEditorOnNextState = false
     clearEditCharacterAvatar()
@@ -1781,6 +1909,7 @@
 
   function toggleCharacterMenu(): void {
     closeMessageActionMenu()
+    isRecordMenuOpen = false
     isCharacterMenuOpen = !isCharacterMenuOpen
   }
 
@@ -1899,10 +2028,304 @@
     await scrollMessagesToBottom()
   }
 
+  function getStickerImageUrl(sticker: ChatSticker, variant: 'chat' | 'thumb' = 'chat'): string {
+    const relativeUrl = sticker.fileUrl || `/stickers/${encodeURIComponent(sticker.id)}/file`
+    const separator = relativeUrl.includes('?') ? '&' : '?'
+    return buildChatHttpUrl(`${relativeUrl}${separator}variant=${variant}`)
+  }
+
+  function getMessageSticker(message: ChatMessage): ChatSticker | null {
+    return message.kind === 'sticker' ? message.sticker : null
+  }
+
+  function getStickerPlaceholder(sticker: ChatSticker | null): string {
+    return `[表情:${sticker?.name?.trim() || '表情'}]`
+  }
+
+  function toggleStickerPicker(): void {
+    if (connectionState !== 'connected') {
+      connectionError = '当前未连接群聊，无法发送表情。'
+      return
+    }
+
+    if (!activeCharacterId) {
+      connectionError = '请先选择角色卡，再发送该角色的表情包。'
+      return
+    }
+
+    isStickerPickerOpen = !isStickerPickerOpen
+
+    if (isStickerPickerOpen && stickers.length === 0 && !isStickerLoading) {
+      void refreshStickers()
+    }
+  }
+
+  async function sendSticker(sticker: ChatSticker): Promise<void> {
+    if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
+      connectionError = '当前未连接群聊，无法发送表情。'
+      return
+    }
+
+    if (!activeCharacterId || sticker.characterId !== activeCharacterId) {
+      connectionError = '这个表情不属于当前角色卡，请刷新表情面板后重试。'
+      return
+    }
+
+    socket.send(
+      JSON.stringify({
+        replyToMessageId: replyTarget?.id ?? null,
+        roomId: room.id,
+        stickerId: sticker.id,
+        type: 'send_sticker',
+      }),
+    )
+
+    isStickerPickerOpen = false
+    clearReplyTarget()
+    connectionError = ''
+    await scrollMessagesToBottom()
+  }
+
+  function createStoryLogRecordId(): string {
+    const cryptoObject = globalThis.crypto
+
+    if (cryptoObject?.randomUUID) {
+      return `log_${cryptoObject.randomUUID().replace(/-/g, '')}`
+    }
+
+    return `log_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  function sanitiseRecordName(value: string): string {
+    return value.replace(/\s+/g, ' ').trim().slice(0, 80)
+  }
+
+  function createDefaultRecordName(): string {
+    const dateLabel = new Intl.DateTimeFormat('zh-CN', {
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      month: '2-digit',
+    }).format(new Date())
+
+    return `${room.name} ${dateLabel}`
+  }
+
+  function createLogSpeakerKey(message: ChatMessage, index: number): string {
+    const characterId = message.speakerCharacterId?.trim() ?? ''
+
+    if (characterId !== '') {
+      return `character:${characterId}`
+    }
+
+    const userId = message.userId?.trim() ?? ''
+
+    if (userId !== '') {
+      return `user:${userId}`
+    }
+
+    const session = message.sessionId?.trim() ?? ''
+
+    if (session !== '') {
+      return `session:${session}`
+    }
+
+    return `fallback:${getMessageSpeakerName(message)}:${index}`
+  }
+
+  function buildRecordingSourceLog(recordMessages: ChatMessage[]): SealDiceStandardLog {
+    return {
+      version: 1,
+      items: recordMessages.map((message) => {
+        const messageBody = message.kind === 'sticker'
+          ? getStickerPlaceholder(message.sticker)
+          : stripReplyPrefixFromLogMessage(message.body)
+
+        return {
+          GroupID: message.roomId,
+          IMUserId: message.userId ?? message.sessionId ?? '',
+          id: message.sequence,
+          isDice: message.kind === 'dice',
+          message: messageBody,
+          nickname: getMessageSpeakerName(message),
+          rawMsgId: message.id,
+          time: Math.floor(message.createdAt / 1000),
+          uniformId: message.speakerCharacterId ?? message.userId ?? message.sessionId ?? '',
+        }
+      }),
+    }
+  }
+
+  function buildRecordingEntries(recordMessages: ChatMessage[]): EditableLogEntry[] {
+    return recordMessages.map((message, index) => {
+      const nickname = normaliseLogNickname(getMessageSpeakerName(message))
+      const messageBody = message.kind === 'sticker'
+        ? getStickerPlaceholder(message.sticker)
+        : stripReplyPrefixFromLogMessage(message.body)
+      const isOoc = detectOocMessage(messageBody)
+      const hasCqImage = detectCqImageMessage(messageBody)
+      const hasSticker = message.kind === 'sticker' || detectStickerPlaceholderMessage(messageBody)
+
+      return {
+        entryId: String(message.sequence),
+        hasCqImage,
+        hasSticker,
+        isDice: message.kind === 'dice',
+        isOoc,
+        keep: !isOoc && !hasCqImage && !hasSticker,
+        message: messageBody,
+        nickname,
+        sourceIndex: index,
+        sourceNickname: nickname,
+        speakerKey: createLogSpeakerKey(message, index),
+        time: Math.floor(message.createdAt / 1000),
+      }
+    })
+  }
+
+  function deriveRecordingPrimaryCharacter(recordMessages: ChatMessage[]): string {
+    const counts = new Map<string, number>()
+
+    for (const message of recordMessages) {
+      const name = normaliseLogNickname(getMessageSpeakerName(message))
+      const lowerName = name.toLowerCase()
+
+      if (['kp', 'kp.', 'keeper', '骰娘', 'system', '系统'].includes(lowerName)) {
+        continue
+      }
+
+      counts.set(name, (counts.get(name) ?? 0) + 1)
+    }
+
+    return [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? '群聊记录'
+  }
+
+  function buildStoryLogRecordFromRecording(recordMessages: ChatMessage[], recording: ChatRecordingState): StoredLogRecord {
+    const entries = buildRecordingEntries(recordMessages)
+    const characterKeys = [...new Set(entries.map((entry) => entry.speakerKey))]
+    const now = Date.now()
+    const safeTitle = sanitiseRecordName(recording.title)
+    const safeFilename = `${safeTitle.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '') || 'chat-log'}.json`
+
+    return {
+      characterColors: ensureCharacterColors(characterKeys, {}),
+      characterVisibility: Object.fromEntries(characterKeys.map((key) => [key, true])),
+      createdAt: now,
+      entries,
+      id: createStoryLogRecordId(),
+      primaryCharacter: deriveRecordingPrimaryCharacter(recordMessages),
+      sequenceNumber: 1,
+      sourceFilename: safeFilename,
+      sourceLabel: '群聊记录',
+      sourceLog: buildRecordingSourceLog(recordMessages),
+      title: safeTitle,
+      updatedAt: now,
+      worldview: recording.worldview,
+    }
+  }
+
+  function openRecordPrompt(): void {
+    if (activeRecording) {
+      isRecordMenuOpen = true
+      return
+    }
+
+    recordNameDraft = createDefaultRecordName()
+    recordWorldviewDraft = activeCharacter?.worldview || defaultCharacterWorldview
+    recordError = ''
+    isRecordMenuOpen = false
+    isRecordPromptOpen = true
+  }
+
+  function closeRecordPrompt(): void {
+    isRecordPromptOpen = false
+    recordError = ''
+  }
+
+  function handleRecordStartSubmit(event: SubmitEvent): void {
+    event.preventDefault()
+    startRecording()
+  }
+
+  function startRecording(): void {
+    const title = sanitiseRecordName(recordNameDraft)
+    const worldview = recordWorldviewDraft.trim()
+
+    if (title === '') {
+      recordError = '请输入本次记录的名称。'
+      return
+    }
+
+    if (worldview === '') {
+      recordError = '请选择本次记录所属世界观。'
+      return
+    }
+
+    if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
+      recordError = '当前未连接群聊，无法开启记录。'
+      return
+    }
+
+    activeRecording = {
+      roomId: activeRoomId,
+      roomName: room.name,
+      startedAt: Date.now(),
+      startSequence: messages.at(-1)?.sequence ?? 0,
+      title,
+      worldview,
+    }
+    recordError = ''
+    isRecordPromptOpen = false
+
+    socket.send(JSON.stringify({ type: 'recording_started' }))
+  }
+
+  async function finishRecording(): Promise<void> {
+    if (!activeRecording || isRecordEnding) {
+      return
+    }
+
+    if (activeRecording.roomId !== activeRoomId) {
+      connectionError = '请回到开启记录的群聊后再结束记录。'
+      return
+    }
+
+    const recordMessages = messages.filter(
+      (message) =>
+        message.sequence > activeRecording!.startSequence &&
+        message.kind !== 'system' &&
+        message.deletedAt === null,
+    )
+
+    if (recordMessages.length === 0) {
+      connectionError = '当前记录还没有可保存的聊天内容。'
+      return
+    }
+
+    isRecordEnding = true
+    connectionError = ''
+
+    try {
+      await createStoryLogRecord(buildStoryLogRecordFromRecording(recordMessages, activeRecording))
+      activeRecording = null
+      isRecordMenuOpen = false
+      connectionError = '记录已上传至日志展示列表。'
+    } catch (error) {
+      connectionError = error instanceof Error ? error.message : '记录上传失败，请稍后重试。'
+    } finally {
+      isRecordEnding = false
+    }
+  }
+
   function switchRoom(nextRoomId: string): void {
     const targetRoomId = nextRoomId.trim()
 
     if (targetRoomId === '' || targetRoomId === activeRoomId) {
+      return
+    }
+
+    if (activeRecording) {
+      connectionError = '请先结束当前记录，再切换群聊。'
       return
     }
 
@@ -2077,6 +2500,12 @@
   $: roomList = rooms.length === 0 ? [ROOM_PLACEHOLDER] : rooms
   $: activeCharacter =
     activeCharacterId === null ? null : characterCards.find((entry) => entry.id === activeCharacterId) ?? null
+  $: if (currentUser && (activeCharacterId ?? '') !== handledStickerCharacterId) {
+    handledStickerCharacterId = activeCharacterId ?? ''
+    stickers = []
+    isStickerPickerOpen = false
+    void refreshStickers()
+  }
   $: renderedMessages = buildRenderedMessages(messages)
 
   function toggleLeftDrawer(): void {
@@ -2107,7 +2536,11 @@
     isRightDrawerOpen = false
   }
 
-  function handleCharacterSettingsPlaceholderClick(): void {}
+  function handleCharacterSettingsPlaceholderClick(): void {
+    closeMessageActionMenu()
+    isCharacterMenuOpen = false
+    isRecordMenuOpen = !isRecordMenuOpen
+  }
 </script>
 
 <svelte:window onclick={handleWindowClick} />
@@ -2406,9 +2839,11 @@
 
                         <div class="chat-message-bubble-list">
                           {#each item.messages as message (message.sequence)}
+                            {@const sticker = getMessageSticker(message)}
                             <button
                               class:chat-dice-bubble={message.kind === 'dice'}
                               class:chat-message-bubble-revoked={isMessageRevoked(message)}
+                              class:chat-sticker-bubble={message.kind === 'sticker'}
                               class="chat-message-bubble"
                               type="button"
                               oncontextmenu={(event) => handleMessageBubbleContextMenu(message, event)}
@@ -2426,11 +2861,24 @@
                               {#if message.kind === 'dice'}
                                 <span class="chat-message-kind">检定结果</span>
                               {/if}
-                              <p use:autoIndentMessage class="chat-message-text">
-                                {#each getMessageBodyLines(getMessageBubbleBody(message)) as line}
-                                  <span class="chat-message-line">{line === '' ? '\u00A0' : line}</span>
-                                {/each}
-                              </p>
+                              {#if sticker && !isMessageRevoked(message)}
+                                <figure class="chat-sticker-message">
+                                  <img
+                                    alt={sticker.name}
+                                    decoding="async"
+                                    height={sticker.height}
+                                    loading="lazy"
+                                    src={getStickerImageUrl(sticker, 'chat')}
+                                    width={sticker.width}
+                                  />
+                                </figure>
+                              {:else}
+                                <p use:autoIndentMessage class="chat-message-text">
+                                  {#each getMessageBodyLines(getMessageBubbleBody(message)) as line}
+                                    <span class="chat-message-line">{line === '' ? '\u00A0' : line}</span>
+                                  {/each}
+                                </p>
+                              {/if}
                             </button>
                           {/each}
                         </div>
@@ -2512,23 +2960,104 @@
                 {/if}
               </div>
 
-              <button
-                aria-label="角色设置"
-                class="toolbar-action chat-character-settings-trigger"
-                type="button"
-                onclick={handleCharacterSettingsPlaceholderClick}
-              >
-                <svg aria-hidden="true" fill="none" viewBox="0 0 20 20">
-                  <path
-                    d="M8.74 2.72a1.5 1.5 0 0 1 2.52 0l.41.68a1.5 1.5 0 0 0 1.56.68l.77-.18a1.5 1.5 0 0 1 1.78 1.78l-.18.77a1.5 1.5 0 0 0 .68 1.56l.68.41a1.5 1.5 0 0 1 0 2.52l-.68.41a1.5 1.5 0 0 0-.68 1.56l.18.77a1.5 1.5 0 0 1-1.78 1.78l-.77-.18a1.5 1.5 0 0 0-1.56.68l-.41.68a1.5 1.5 0 0 1-2.52 0l-.41-.68a1.5 1.5 0 0 0-1.56-.68l-.77.18a1.5 1.5 0 0 1-1.78-1.78l.18-.77a1.5 1.5 0 0 0-.68-1.56l-.68-.41a1.5 1.5 0 0 1 0-2.52l.68-.41a1.5 1.5 0 0 0 .68-1.56l-.18-.77A1.5 1.5 0 0 1 6 3.9l.77.18a1.5 1.5 0 0 0 1.56-.68l.41-.68Z"
-                    stroke="currentColor"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="1.4"
-                  />
-                  <circle cx="10" cy="10" r="2.6" stroke="currentColor" stroke-width="1.4" />
-                </svg>
-              </button>
+              <div bind:this={recordMenuElement} class="chat-record-menu-anchor">
+                <button
+                  aria-expanded={isRecordMenuOpen}
+                  aria-label="群聊记录设置"
+                  class:has-active-recording={activeRecording !== null}
+                  class="toolbar-action chat-character-settings-trigger"
+                  type="button"
+                  onclick={handleCharacterSettingsPlaceholderClick}
+                >
+                  <svg aria-hidden="true" fill="none" viewBox="0 0 20 20">
+                    <path
+                      d="M8.74 2.72a1.5 1.5 0 0 1 2.52 0l.41.68a1.5 1.5 0 0 0 1.56.68l.77-.18a1.5 1.5 0 0 1 1.78 1.78l-.18.77a1.5 1.5 0 0 0 .68 1.56l.68.41a1.5 1.5 0 0 1 0 2.52l-.68.41a1.5 1.5 0 0 0-.68 1.56l.18.77a1.5 1.5 0 0 1-1.78 1.78l-.77-.18a1.5 1.5 0 0 0-1.56.68l-.41.68a1.5 1.5 0 0 1-2.52 0l-.41-.68a1.5 1.5 0 0 0-1.56-.68l-.77.18a1.5 1.5 0 0 1-1.78-1.78l.18-.77a1.5 1.5 0 0 0-.68-1.56l-.68-.41a1.5 1.5 0 0 1 0-2.52l.68-.41a1.5 1.5 0 0 0 .68-1.56l-.18-.77A1.5 1.5 0 0 1 6 3.9l.77.18a1.5 1.5 0 0 0 1.56-.68l.41-.68Z"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.4"
+                    />
+                    <circle cx="10" cy="10" r="2.6" stroke="currentColor" stroke-width="1.4" />
+                  </svg>
+                </button>
+
+                {#if isRecordMenuOpen}
+                  <div class="chat-record-menu">
+                    {#if activeRecording}
+                      <div class="chat-record-menu-status">
+                        <strong>正在记录</strong>
+                        <span>{activeRecording.title}</span>
+                      </div>
+                      <button
+                        class="chat-record-menu-item"
+                        disabled={isRecordEnding}
+                        type="button"
+                        onclick={finishRecording}
+                      >
+                        {isRecordEnding ? '正在上传' : '结束记录'}
+                      </button>
+                    {:else}
+                      <button class="chat-record-menu-item" type="button" onclick={openRecordPrompt}>
+                        开启记录
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+
+              <div bind:this={stickerMenuElement} class="chat-sticker-menu-anchor">
+                <button
+                  aria-expanded={isStickerPickerOpen}
+                  aria-label="选择表情包"
+                  class="toolbar-action chat-sticker-trigger"
+                  disabled={connectionState !== 'connected'}
+                  title="表情包"
+                  type="button"
+                  onclick={toggleStickerPicker}
+                >
+                  <img alt="" aria-hidden="true" src="/sticker.svg" />
+                </button>
+
+                {#if isStickerPickerOpen}
+                  <div class="chat-sticker-picker">
+                    <div class="chat-sticker-picker-head">
+                      <strong>表情包</strong>
+                      <button type="button" onclick={() => void refreshStickers()}>刷新</button>
+                    </div>
+
+                    {#if stickerError !== ''}
+                      <div class="chat-sticker-picker-status">{stickerError}</div>
+                    {:else if isStickerLoading}
+                      <div class="chat-sticker-picker-status">正在加载表情包...</div>
+                    {:else if !activeCharacterId}
+                      <div class="chat-sticker-picker-status">请先选择角色卡。</div>
+                    {:else if stickers.length === 0}
+                      <div class="chat-sticker-picker-status">当前角色卡暂无可用表情包。</div>
+                    {:else}
+                      <div class="chat-sticker-grid">
+                        {#each stickers as sticker (sticker.id)}
+                          <button
+                            class="chat-sticker-option"
+                            title={sticker.name}
+                            type="button"
+                            onclick={() => void sendSticker(sticker)}
+                          >
+                            <img
+                              alt={sticker.name}
+                              decoding="async"
+                              height={sticker.height}
+                              loading="lazy"
+                              src={getStickerImageUrl(sticker, 'thumb')}
+                              width={sticker.width}
+                            />
+                            <span>{sticker.name}</span>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
             </div>
 
             {#if replyTarget}
@@ -2670,6 +3199,50 @@
           {/if}
           <button class="toolbar-action toolbar-primary" disabled={isAuthChecking} type="submit">
             {isAuthChecking ? '验证中…' : '验证并继续'}
+          </button>
+        </div>
+      </form>
+    </div>
+  {/if}
+
+  {#if isRecordPromptOpen}
+    <div class="chat-nickname-overlay">
+      <form class="chat-nickname-dialog" onsubmit={handleRecordStartSubmit}>
+        <div>
+          <span class="section-label">群聊记录</span>
+          <h3>开启记录</h3>
+          <p>记录会从当前时间点开始，结束后自动上传到对应世界观的 log 展示列表。</p>
+        </div>
+
+        <label class="chat-nickname-field">
+          <span>本次记录名称</span>
+          <input
+            bind:value={recordNameDraft}
+            maxlength="80"
+            placeholder="例如：第一幕 · 湖边"
+            type="text"
+          />
+        </label>
+
+        <label class="chat-nickname-field">
+          <span>所属世界观</span>
+          <select bind:value={recordWorldviewDraft}>
+            {#each availableCharacterWorldviews as worldview}
+              <option value={worldview}>{worldview}</option>
+            {/each}
+          </select>
+        </label>
+
+        {#if recordError !== ''}
+          <div class="chat-nickname-error">{recordError}</div>
+        {/if}
+
+        <div class="chat-nickname-actions">
+          <button class="toolbar-action" type="button" onclick={closeRecordPrompt}>
+            取消
+          </button>
+          <button class="toolbar-action toolbar-primary" type="submit">
+            开始记录
           </button>
         </div>
       </form>

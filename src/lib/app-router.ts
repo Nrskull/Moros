@@ -9,6 +9,7 @@ export type AppPage =
   | 'chat-room'
   | 'event-detail'
   | 'admin-character'
+  | 'admin-sticker'
   | 'admin-worldview'
 
 export interface AppRoute {
@@ -111,6 +112,14 @@ export function parseAppRoute(url: URL | Location): AppRoute {
     }
   }
 
+  if (pathname === '/admin/stickers') {
+    return {
+      eventId: '',
+      page: 'admin-sticker',
+      worldviewName: null,
+    }
+  }
+
   if (pathname === '/admin/worldviews') {
     return {
       eventId: '',
@@ -159,6 +168,8 @@ export function buildAppRouteHref(route: {
     pathname = '/chat'
   } else if (route.page === 'admin-character') {
     pathname = '/admin/characters'
+  } else if (route.page === 'admin-sticker') {
+    pathname = '/admin/stickers'
   } else if (route.page === 'admin-worldview') {
     pathname = '/admin/worldviews'
   } else if (route.page === 'event-detail') {
@@ -170,7 +181,7 @@ export function buildAppRouteHref(route: {
   const worldviewName = decodeWorldviewName(route.worldviewName ?? null)
 
   if (
-    !['home', 'chat-room', 'admin-character', 'admin-worldview', 'tools-overview', 'character-sheet'].includes(route.page) &&
+    !['home', 'chat-room', 'admin-character', 'admin-sticker', 'admin-worldview', 'tools-overview', 'character-sheet'].includes(route.page) &&
     worldviewName
   ) {
     searchParams.set('worldview', worldviewName)
