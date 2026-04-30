@@ -641,6 +641,7 @@ database.exec(`
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
     description TEXT NOT NULL,
     cover_image TEXT NOT NULL,
+    is_hidden INTEGER NOT NULL DEFAULT 0,
     tags_json TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -657,6 +658,7 @@ database.exec(`
     name TEXT NOT NULL,
     color TEXT NOT NULL,
     avatar_data_url TEXT,
+    skills_json TEXT NOT NULL,
     presentation_mode TEXT NOT NULL,
     status TEXT NOT NULL,
     is_default INTEGER NOT NULL,
@@ -788,9 +790,11 @@ function ensureColumn(tableName, columnName, columnDefinition) {
 
 ensureColumn('sessions', 'user_id', 'user_id TEXT')
 ensureColumn('sessions', 'active_character_id', 'active_character_id TEXT')
+ensureColumn('worldviews', 'is_hidden', 'is_hidden INTEGER NOT NULL DEFAULT 0')
 ensureColumn('character_cards', 'worldview', "worldview TEXT NOT NULL DEFAULT ''")
 ensureColumn('character_cards', 'color', "color TEXT NOT NULL DEFAULT '#64748b'")
 ensureColumn('character_cards', 'avatar_data_url', 'avatar_data_url TEXT')
+ensureColumn('character_cards', 'skills_json', `skills_json TEXT NOT NULL DEFAULT '[]'`)
 ensureColumn('character_cards', 'presentation_mode', `presentation_mode TEXT NOT NULL DEFAULT '${CHAT_PRESENTATION_BUBBLE}'`)
 database.exec('CREATE INDEX IF NOT EXISTS idx_character_cards_worldview ON character_cards(worldview)')
 ensureColumn('messages', 'user_id', 'user_id TEXT')
@@ -1007,6 +1011,7 @@ const statementSelectWorldviews = database.prepare(`
     name,
     description,
     cover_image AS coverImage,
+    is_hidden AS isHidden,
     tags_json AS tagsJson,
     created_at AS createdAt,
     updated_at AS updatedAt,
@@ -1021,6 +1026,7 @@ const statementSelectWorldviewById = database.prepare(`
     name,
     description,
     cover_image AS coverImage,
+    is_hidden AS isHidden,
     tags_json AS tagsJson,
     created_at AS createdAt,
     updated_at AS updatedAt,
@@ -1036,6 +1042,7 @@ const statementSelectWorldviewByName = database.prepare(`
     name,
     description,
     cover_image AS coverImage,
+    is_hidden AS isHidden,
     tags_json AS tagsJson,
     created_at AS createdAt,
     updated_at AS updatedAt,
@@ -1051,6 +1058,7 @@ const statementInsertWorldview = database.prepare(`
     name,
     description,
     cover_image,
+    is_hidden,
     tags_json,
     created_at,
     updated_at,
@@ -1061,6 +1069,7 @@ const statementInsertWorldview = database.prepare(`
     @name,
     @description,
     @coverImage,
+    @isHidden,
     @tagsJson,
     @createdAt,
     @updatedAt,
@@ -1073,6 +1082,7 @@ const statementUpdateWorldviewMetadata = database.prepare(`
   SET name = @name,
       description = @description,
       cover_image = @coverImage,
+      is_hidden = @isHidden,
       tags_json = @tagsJson,
       updated_at = @updatedAt
   WHERE id = @id
@@ -1974,6 +1984,7 @@ const statementInsertCharacterCard = database.prepare(`
     name,
     color,
     avatar_data_url,
+    skills_json,
     presentation_mode,
     status,
     is_default,
@@ -1987,6 +1998,7 @@ const statementInsertCharacterCard = database.prepare(`
     @name,
     @color,
     @avatarDataUrl,
+    @skillsJson,
     @presentationMode,
     @status,
     @isDefault,
@@ -2032,6 +2044,7 @@ const statementUpdateCharacterCard = database.prepare(`
       name = @name,
       color = @color,
       avatar_data_url = @avatarDataUrl,
+      skills_json = @skillsJson,
       presentation_mode = @presentationMode,
       updated_at = @updatedAt
   WHERE id = @id AND user_id = @userId
@@ -2044,6 +2057,7 @@ const statementAdminUpdateCharacterCard = database.prepare(`
       name = @name,
       color = @color,
       avatar_data_url = @avatarDataUrl,
+      skills_json = @skillsJson,
       presentation_mode = @presentationMode,
       status = @status,
       updated_at = @updatedAt
@@ -2080,6 +2094,7 @@ const statementSelectCharacterCardsForUser = database.prepare(`
     character_cards.name,
     character_cards.color,
     character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.skills_json AS skillsJson,
     character_cards.presentation_mode AS presentationMode,
     character_cards.status,
     character_cards.is_default AS isDefault,
@@ -2106,6 +2121,7 @@ const statementSelectCharacterCardByIdForUser = database.prepare(`
     character_cards.name,
     character_cards.color,
     character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.skills_json AS skillsJson,
     character_cards.presentation_mode AS presentationMode,
     character_cards.status,
     character_cards.is_default AS isDefault,
@@ -2132,6 +2148,7 @@ const statementSelectCharacterCardById = database.prepare(`
     character_cards.name,
     character_cards.color,
     character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.skills_json AS skillsJson,
     character_cards.presentation_mode AS presentationMode,
     character_cards.status,
     character_cards.is_default AS isDefault,
@@ -2158,6 +2175,7 @@ const statementSelectCharacterCardsForWorldview = database.prepare(`
     character_cards.name,
     character_cards.color,
     character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.skills_json AS skillsJson,
     character_cards.presentation_mode AS presentationMode,
     character_cards.status,
     character_cards.is_default AS isDefault,
@@ -2185,6 +2203,7 @@ const statementSelectAllCharacterCardsForAdmin = database.prepare(`
     character_cards.name,
     character_cards.color,
     character_cards.avatar_data_url AS avatarDataUrl,
+    character_cards.skills_json AS skillsJson,
     character_cards.presentation_mode AS presentationMode,
     character_cards.status,
     character_cards.is_default AS isDefault,
@@ -2392,6 +2411,79 @@ const statementSelectRecentMessages = database.prepare(`
   LEFT JOIN character_stickers ON character_stickers.id = recent.sticker_id
   LEFT JOIN stickers ON stickers.id = character_stickers.sticker_asset_id
   ORDER BY sequence ASC
+`)
+
+const statementSelectMessagesBefore = database.prepare(`
+  SELECT
+    recent.sequence,
+    recent.id,
+    recent.room_id AS roomId,
+    recent.session_id AS sessionId,
+    COALESCE(recent.user_id, sessions.user_id) AS userId,
+    recent.nickname,
+    recent.speaker_name AS speakerName,
+    recent.speaker_character_id AS speakerCharacterId,
+    recent.speaker_avatar_data_url AS speakerAvatarDataUrl,
+    recent.speaker_display_mode AS speakerDisplayMode,
+    recent.reply_to_message_id AS replyToMessageId,
+    recent.reply_to_speaker_name AS replyToSpeakerName,
+    recent.reply_to_body AS replyToBody,
+    recent.deleted_at AS deletedAt,
+    recent.deleted_by_user_id AS deletedByUserId,
+    recent.kind,
+    recent.sticker_id AS stickerId,
+    character_stickers.character_id AS stickerCharacterId,
+    character_stickers.sticker_asset_id AS stickerAssetId,
+    character_stickers.name AS stickerName,
+    stickers.mime_type AS stickerMimeType,
+    stickers.width AS stickerWidth,
+    stickers.height AS stickerHeight,
+    stickers.size_bytes AS stickerSizeBytes,
+    stickers.sha256 AS stickerSha256,
+    stickers.source AS stickerSource,
+    character_stickers.status AS stickerStatus,
+    character_stickers.created_at AS stickerCreatedAt,
+    character_stickers.updated_at AS stickerUpdatedAt,
+    recent.body,
+    recent.created_at AS createdAt
+  FROM (
+    SELECT
+      sequence,
+      id,
+      room_id,
+      session_id,
+      user_id,
+      nickname,
+      speaker_name,
+      speaker_character_id,
+      speaker_avatar_data_url,
+      speaker_display_mode,
+      reply_to_message_id,
+      reply_to_speaker_name,
+      reply_to_body,
+      deleted_at,
+      deleted_by_user_id,
+      kind,
+      sticker_id,
+      body,
+      created_at
+    FROM messages
+    WHERE room_id = ? AND kind != 'system' AND sequence < ?
+    ORDER BY sequence DESC
+    LIMIT ?
+  ) recent
+  LEFT JOIN sessions ON sessions.id = recent.session_id
+  LEFT JOIN character_stickers ON character_stickers.id = recent.sticker_id
+  LEFT JOIN stickers ON stickers.id = character_stickers.sticker_asset_id
+  ORDER BY sequence ASC
+`)
+
+const statementSelectAnyMessageBefore = database.prepare(`
+  SELECT sequence
+  FROM messages
+  WHERE room_id = ? AND kind != 'system' AND sequence < ?
+  ORDER BY sequence DESC
+  LIMIT 1
 `)
 
 const statementSelectMessageById = database.prepare(`
@@ -3255,6 +3347,10 @@ function sanitiseWorldviewCoverImage(value) {
   return String(value ?? '').trim().slice(0, WORLDVIEW_MAX_COVER_IMAGE_LENGTH)
 }
 
+function sanitiseWorldviewHidden(value) {
+  return value === true || value === 1 || value === '1' || value === 'true' ? 1 : 0
+}
+
 function sanitiseWorldviewTags(value) {
   const source = Array.isArray(value) ? value : []
   const seenTags = new Set()
@@ -3297,6 +3393,7 @@ function serialiseWorldview(row) {
     createdByUserId: String(row.createdByUserId ?? '').trim() || null,
     description: sanitiseWorldviewDescription(row.description),
     id: String(row.id ?? '').trim(),
+    isHidden: sanitiseWorldviewHidden(row.isHidden) === 1,
     name: sanitiseWorldviewName(row.name),
     tags: parseWorldviewTags(row.tagsJson),
     updatedAt: Number(row.updatedAt ?? 0),
@@ -3336,6 +3433,7 @@ function ensureWorldviewRecord(name, options = {}) {
     createdByUserId: String(options.createdByUserId ?? '').trim() || ADMIN_USER.id,
     description: sanitiseWorldviewDescription(options.description) || '当前世界观简介尚待补充。',
     id: createWorldviewId(),
+    isHidden: sanitiseWorldviewHidden(options.isHidden),
     name: safeName,
     tagsJson: JSON.stringify(sanitiseWorldviewTags(options.tags)),
     updatedAt: now,
@@ -3407,6 +3505,7 @@ const renameWorldviewReferences = database.transaction((worldviewId, payload, up
   const updatedAt = Date.now()
   const description = sanitiseWorldviewDescription(payload?.description) || '当前世界观简介尚待补充。'
   const coverImage = sanitiseWorldviewCoverImage(payload?.coverImage)
+  const isHidden = sanitiseWorldviewHidden(payload?.isHidden)
   const tags = sanitiseWorldviewTags(payload?.tags)
 
   if (existing.name !== nextName) {
@@ -3460,6 +3559,7 @@ const renameWorldviewReferences = database.transaction((worldviewId, payload, up
     coverImage,
     description,
     id: existing.id,
+    isHidden,
     name: nextName,
     tagsJson: JSON.stringify(tags),
     updatedAt,
@@ -3861,7 +3961,7 @@ function createDefaultAgeChronicleEntries(ownerUserId = ADMIN_USER.id, timestamp
     createdByUserId: ownerUserId,
     id: entry.id,
     label: entry.label,
-    note: entry.note,
+    note: '',
     updatedAt: timestamp,
     visibility: AGE_CHRONICLE_VISIBILITY_PUBLIC,
     worldviewName: '',
@@ -3875,7 +3975,7 @@ function serialiseAgeChronicleEntry(row) {
     createdByUserId: row.createdByUserId ?? null,
     id: row.id,
     label: row.label,
-    note: row.note,
+    note: '',
     updatedAt: row.updatedAt,
     visibility: normaliseAgeChronicleVisibility(row.visibility),
     year: row.year,
@@ -3985,29 +4085,11 @@ function migrateLegacyAgeChronicleWorldview(worldviewName, row) {
       createdByUserId: ownerUserId,
       id: entry.id,
       label: entry.label,
-      note: entry.note,
+      note: '',
       updatedAt,
       visibility: AGE_CHRONICLE_VISIBILITY_PUBLIC,
       worldviewName,
       year: entry.year,
-    })
-  }
-
-  for (const [key, body] of Object.entries(legacyState.cellDescriptions)) {
-    const [profileId, entryId] = key.split('::')
-
-    if (profileId === '' || entryId === '' || body.trim() === '') {
-      continue
-    }
-
-    statementUpsertAgeChronicleCellNote.run({
-      authorUserId: ADMIN_USER.id,
-      body,
-      createdAt: updatedAt,
-      entryId,
-      profileId,
-      updatedAt,
-      worldviewName,
     })
   }
 }
@@ -4056,7 +4138,6 @@ function buildAgeChronicleCapabilities(authContext) {
 
   return {
     canCreateEntry: isAuthenticated,
-    canEditOwnCellNote: isAuthenticated,
     canEditSharedStructure: isAdmin,
     canManageEntry: isAdmin,
   }
@@ -4076,47 +4157,13 @@ function buildAgeChronicleStateForViewer(worldviewName, authContext) {
     .map(serialiseAgeChronicleEntry)
   const viewerUserId = authContext?.user.id ?? ''
   const visibleEntries = allEntries.filter((entry) => isAgeChronicleEntryVisibleToUser(entry, viewerUserId))
-  const visibleEntryIds = new Set(visibleEntries.map((entry) => entry.id))
-  const validProfileIds = new Set(structure.characterProfiles.map((profile) => profile.id))
-  const ownCellDescriptions = {}
-  const adminCellNotes = {}
-  const isAdmin = viewerUserId !== '' && isAdminUser(viewerUserId)
-
-  for (const noteRow of statementSelectAgeChronicleCellNotesForWorldview.all(worldviewName)) {
-    const note = serialiseAgeChronicleCellNote(noteRow)
-
-    if (!visibleEntryIds.has(note.entryId) || !validProfileIds.has(note.profileId)) {
-      continue
-    }
-
-    const key = `${note.profileId}::${note.entryId}`
-
-    if (note.authorUserId === viewerUserId) {
-      ownCellDescriptions[key] = note.body
-    }
-
-    if (isAdmin) {
-      if (!adminCellNotes[key]) {
-        adminCellNotes[key] = []
-      }
-
-      adminCellNotes[key].push({
-        authorDisplayName: note.authorDisplayName,
-        authorUserId: note.authorUserId,
-        body: note.body,
-        updatedAt: note.updatedAt,
-      })
-    }
-  }
 
   return {
     capabilities: buildAgeChronicleCapabilities(authContext),
     state: {
-      adminCellNotes,
       characterProfiles: structure.characterProfiles,
       chronicleEntries: visibleEntries,
       nextCharacterIndex: structure.nextCharacterIndex,
-      ownCellDescriptions,
     },
     updatedAt: Math.max(
       ...visibleEntries.map((entry) => entry.updatedAt),
@@ -5318,6 +5365,74 @@ function canManageStoryLog(row, authContext) {
   return authContext?.user.role === 'admin' || row.createdByUserId === authContext?.user.id
 }
 
+function parseCharacterSkillsJson(skillsJson) {
+  try {
+    const parsed = JSON.parse(skillsJson)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function sanitiseCharacterSkillText(input, fallback = '') {
+  const value = String(input ?? '').trim().slice(0, 48)
+  return value === '' ? fallback : value
+}
+
+function sanitiseCharacterSkillId(input, index) {
+  return String(input ?? '').trim().slice(0, 96) || `skill_${index + 1}`
+}
+
+function sanitiseCharacterSkillPointValue(input, maximum = 999) {
+  const numericValue = Number(input)
+
+  if (!Number.isFinite(numericValue)) {
+    return 0
+  }
+
+  return Math.max(0, Math.min(maximum, Math.round(numericValue)))
+}
+
+function normaliseCharacterSkills(input) {
+  if (!Array.isArray(input)) {
+    return []
+  }
+
+  const seenIds = new Set()
+
+  return input.slice(0, 256).flatMap((skill, index) => {
+    if (!skill || typeof skill !== 'object') {
+      return []
+    }
+
+    const id = sanitiseCharacterSkillId(skill.id, index)
+
+    if (seenIds.has(id)) {
+      return []
+    }
+
+    seenIds.add(id)
+
+    const originalName = sanitiseCharacterSkillText(skill.originalName, '未命名技能')
+    const occupationPoints = sanitiseCharacterSkillPointValue(skill.occupationPoints, 100)
+    const interestPoints = sanitiseCharacterSkillPointValue(skill.interestPoints, 100)
+    const growthPoints = sanitiseCharacterSkillPointValue(skill.growthPoints, 100)
+
+    return [{
+      growthPoints,
+      id,
+      interestPoints,
+      name: sanitiseCharacterSkillText(skill.name, originalName),
+      occupationPoints,
+      originalName,
+      totalValue: sanitiseCharacterSkillPointValue(
+        skill.totalValue,
+        999,
+      ) || occupationPoints + interestPoints + growthPoints,
+    }]
+  })
+}
+
 function serialiseCharacter(row) {
   return {
     attributes: {
@@ -5337,6 +5452,7 @@ function serialiseCharacter(row) {
     isDefault: row.isDefault === 1,
     name: row.name,
     presentationMode: normalisePresentationMode(row.presentationMode),
+    skills: normaliseCharacterSkills(parseCharacterSkillsJson(row.skillsJson)),
     status: row.status,
     userId: row.userId ?? null,
     worldview: sanitiseVerticalTimelineWorldview(row.worldview),
@@ -5631,6 +5747,14 @@ function normaliseCharacterAttributes(input) {
   }
 }
 
+function resolveCharacterSkillsPayload(payloadSkills, fallbackSkillsJson = '[]') {
+  if (payloadSkills === undefined) {
+    return normaliseCharacterSkills(parseCharacterSkillsJson(fallbackSkillsJson))
+  }
+
+  return normaliseCharacterSkills(payloadSkills)
+}
+
 function createCharacterCardForUser(userId, payload) {
   const name = sanitiseCharacterName(payload?.name)
   const worldview = sanitiseVerticalTimelineWorldview(payload?.worldview)
@@ -5657,6 +5781,7 @@ function createCharacterCardForUser(userId, payload) {
 
   const existingCharacters = getCharacterCardsForUser(userId)
   const attributes = normaliseCharacterAttributes(payload?.attributes)
+  const skills = resolveCharacterSkillsPayload(payload?.skills)
   const characterId = createCharacterId()
   const now = Date.now()
 
@@ -5674,6 +5799,7 @@ function createCharacterCardForUser(userId, payload) {
     name,
     avatarDataUrl: avatarState.avatarDataUrl,
     presentationMode: normalisePresentationMode(payload?.presentationMode),
+    skillsJson: JSON.stringify(skills),
     status: 'active',
     updatedAt: now,
     userId,
@@ -5732,6 +5858,7 @@ function updateCharacterCardForUser(userId, payload) {
   }
 
   const attributes = normaliseCharacterAttributes(payload?.attributes)
+  const skills = resolveCharacterSkillsPayload(payload?.skills, existingCharacter.skillsJson)
   const updatedAt = Date.now()
 
   if (!statementSelectWorldviewByName.get(worldview)) {
@@ -5746,6 +5873,7 @@ function updateCharacterCardForUser(userId, payload) {
     name,
     avatarDataUrl: avatarState.avatarDataUrl,
     presentationMode: normalisePresentationMode(payload?.presentationMode ?? existingCharacter.presentationMode),
+    skillsJson: JSON.stringify(skills),
     updatedAt,
     userId,
     worldview,
@@ -5810,6 +5938,7 @@ function updateCharacterCardAsAdmin(characterId, payload) {
 
   const updatedAt = Date.now()
   const attributes = normaliseCharacterAttributes(payload?.attributes)
+  const skills = resolveCharacterSkillsPayload(payload?.skills, existingCharacter.skillsJson)
   const nextStatus = payload?.delete === true || payload?.status === 'archived' ? 'archived' : 'active'
 
   statementAdminUpdateCharacterCard.run({
@@ -5818,6 +5947,7 @@ function updateCharacterCardAsAdmin(characterId, payload) {
     id: safeCharacterId,
     name,
     presentationMode: normalisePresentationMode(payload?.presentationMode ?? existingCharacter.presentationMode),
+    skillsJson: JSON.stringify(skills),
     status: nextStatus,
     updatedAt,
     userId,
@@ -5885,6 +6015,20 @@ function parseDiceCommand(body) {
   }
 }
 
+function sanitiseCheckLabel(input) {
+  return String(input ?? '').trim().slice(0, 40)
+}
+
+function sanitiseCheckTargetValue(input) {
+  const numericValue = Number(input)
+
+  if (!Number.isFinite(numericValue)) {
+    return null
+  }
+
+  return Math.max(0, Math.min(999, Math.round(numericValue)))
+}
+
 function resolveCheckRank(rollValue, targetValue) {
   if (rollValue === 1) {
     return '大成功'
@@ -5917,6 +6061,30 @@ function getHistory(roomId, afterSequence = 0) {
   }
 
   return statementSelectRecentMessages.all(roomId, MAX_HISTORY_LIMIT).map(serialiseMessage)
+}
+
+function getHistoryBefore(roomId, beforeSequence) {
+  const safeBeforeSequence = normaliseSequence(beforeSequence)
+
+  if (safeBeforeSequence <= 0) {
+    return {
+      hasMore: false,
+      messages: [],
+    }
+  }
+
+  const messages = statementSelectMessagesBefore
+    .all(roomId, safeBeforeSequence, MAX_HISTORY_LIMIT)
+    .map(serialiseMessage)
+  const oldestSequence = messages[0]?.sequence ?? safeBeforeSequence
+  const hasMore =
+    messages.length > 0 &&
+    Boolean(statementSelectAnyMessageBefore.get(roomId, oldestSequence))
+
+  return {
+    hasMore,
+    messages,
+  }
 }
 
 function persistSession(sessionId, nickname, userId) {
@@ -6254,6 +6422,49 @@ function attachSessionToRoom(state, socket, payload) {
 
   broadcastPresence(roomId)
   broadcastRooms()
+}
+
+function handleLoadHistory(state, socket, payload) {
+  if (!state.joined) {
+    sendJson(socket, {
+      message: '请先加入群聊。',
+      type: 'error',
+    })
+    return
+  }
+
+  const roomId = String(payload.roomId ?? '').trim()
+
+  if (roomId === '' || roomId !== state.roomId) {
+    sendJson(socket, {
+      message: '只能加载当前群聊的历史记录。',
+      type: 'error',
+    })
+    return
+  }
+
+  const beforeSequence = normaliseSequence(payload.beforeSequence)
+
+  if (beforeSequence <= 0) {
+    sendJson(socket, {
+      beforeSequence,
+      hasMore: false,
+      messages: [],
+      roomId,
+      type: 'history_loaded',
+    })
+    return
+  }
+
+  const history = getHistoryBefore(roomId, beforeSequence)
+
+  sendJson(socket, {
+    beforeSequence,
+    hasMore: history.hasMore,
+    messages: history.messages,
+    roomId,
+    type: 'history_loaded',
+  })
 }
 
 function handleCreateRoom(state, socket, payload) {
@@ -6597,6 +6808,65 @@ function handleDiceCommand(state, socket, body) {
 
   const message = persistMessage({
     body: `${command.attributeLabel} 检定：1d100=${rollValue} / ${targetValue}\n结果：${resultRank}`,
+    kind: 'dice',
+    nickname: state.nickname,
+    roomId: state.roomId,
+    sessionId: state.sessionId,
+    userId: state.userId,
+    ...speakerSnapshot,
+  })
+
+  broadcastToRoom(state.roomId, {
+    message,
+    type: 'message',
+  })
+  broadcastRooms()
+}
+
+function handleSendCheck(state, socket, payload) {
+  if (!state.joined) {
+    sendJson(socket, {
+      message: '请先加入群聊。',
+      type: 'error',
+    })
+    return
+  }
+
+  const roomId = String(payload.roomId ?? '').trim()
+
+  if (roomId === '' || roomId !== state.roomId) {
+    sendJson(socket, {
+      message: '只能在当前群聊中发送检定。',
+      type: 'error',
+    })
+    return
+  }
+
+  if (state.userId === '' || state.activeCharacterId === '') {
+    sendJson(socket, {
+      message: '请先选择角色卡，再进行检定。',
+      type: 'error',
+    })
+    return
+  }
+
+  const label = sanitiseCheckLabel(payload.label)
+  const targetValue = sanitiseCheckTargetValue(payload.targetValue)
+
+  if (label === '' || targetValue === null) {
+    sendJson(socket, {
+      message: '检定目标无效。',
+      type: 'error',
+    })
+    return
+  }
+
+  const speakerSnapshot = resolveActiveSpeakerSnapshot(state)
+  const rollValue = crypto.randomInt(1, 101)
+  const resultRank = resolveCheckRank(rollValue, targetValue)
+
+  const message = persistMessage({
+    body: `${label} 检定：1d100=${rollValue} / ${targetValue}\n结果：${resultRank}`,
     kind: 'dice',
     nickname: state.nickname,
     roomId: state.roomId,
@@ -7787,6 +8057,7 @@ async function handleWorldviewCreate(request, response) {
     coverImage: body?.coverImage,
     createdByUserId: authContext.user.id,
     description: body?.description,
+    isHidden: body?.isHidden,
     tags: body?.tags,
     updatedAt: Date.now(),
   })
@@ -7954,7 +8225,6 @@ async function handleAgeChronicleEntryCreate(request, response) {
 
   const worldviewName = sanitiseAgeChronicleWorldview(body?.worldview)
   const label = sanitiseAgeChronicleShortText(body?.label, AGE_CHRONICLE_MAX_LABEL_LENGTH)
-  const note = sanitiseAgeChronicleLongText(body?.note, AGE_CHRONICLE_MAX_NOTE_LENGTH)
   const year = normaliseAgeChronicleNumber(body?.year, 0)
   const visibility = normaliseAgeChronicleVisibility(body?.visibility)
 
@@ -7976,7 +8246,7 @@ async function handleAgeChronicleEntryCreate(request, response) {
     createdByUserId: authContext.user.id,
     id: createAgeChronicleEntryId(),
     label: label === '' ? `新编年 ${year}` : label,
-    note,
+    note: '',
     updatedAt: now,
     visibility,
     worldviewName,
@@ -8037,13 +8307,12 @@ async function handleAgeChronicleEntryUpdate(request, response, entryId) {
 
   const year = normaliseAgeChronicleNumber(body?.year, entry.year)
   const label = sanitiseAgeChronicleShortText(body?.label, AGE_CHRONICLE_MAX_LABEL_LENGTH, entry.label)
-  const note = sanitiseAgeChronicleLongText(body?.note, AGE_CHRONICLE_MAX_NOTE_LENGTH)
   const visibility = normaliseAgeChronicleVisibility(body?.visibility ?? entry.visibility)
 
   statementUpdateAgeChronicleEntry.run({
     id: entryId,
     label,
-    note,
+    note: '',
     updatedAt: Date.now(),
     visibility,
     worldviewName,
@@ -8165,6 +8434,64 @@ function handleAdminCharacterCardsGet(request, response) {
   } catch (error) {
     writeJson(response, 500, { message: String(error), ok: false }, { headers })
   }
+}
+
+function handleCharacterCardsGet(request, response) {
+  const headers = appendCorsHeaders(request)
+
+  try {
+    const requestUrl = new URL(request.url, `http://${request.headers.host || 'localhost'}`)
+    const worldviewName = sanitiseVerticalTimelineWorldview(requestUrl.searchParams.get('worldview'))
+    const rows = worldviewName === ''
+      ? statementSelectAllCharacterCardsForAdmin.all()
+      : statementSelectCharacterCardsForWorldview.all(worldviewName)
+
+    const cards = rows.map(serialiseCharacter)
+
+    writeJson(response, 200, { cards, ok: true }, { headers })
+  } catch (error) {
+    writeJson(response, 500, { message: String(error), ok: false }, { headers })
+  }
+}
+
+async function handleCharacterCardUpdate(request, response, characterId) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
+  const headers = appendCorsHeaders(request)
+
+  if (!authContext?.user?.id) {
+    writeJson(response, 401, { message: '请先登录后再保存角色卡。', ok: false }, { headers })
+    return
+  }
+
+  let body
+
+  try {
+    body = await readJsonBody(request, 512 * 1024)
+  } catch (error) {
+    const message = error instanceof Error && error.message === 'BODY_TOO_LARGE'
+      ? '角色卡内容过大，请删减后再试。'
+      : '请求体格式无效。'
+    writeJson(response, 400, { message, ok: false }, { headers })
+    return
+  }
+
+  const result = updateCharacterCardForUser(authContext.user.id, {
+    ...body,
+    characterId,
+  })
+
+  if (result.error) {
+    writeJson(response, 400, { message: result.error, ok: false }, { headers })
+    return
+  }
+
+  const updatedCharacter = statementSelectCharacterCardByIdForUser.get(characterId, authContext.user.id)
+
+  writeJson(response, 200, {
+    card: updatedCharacter ? serialiseCharacter(updatedCharacter) : null,
+    characterId: result.characterId,
+    ok: true,
+  }, { headers })
 }
 
 async function handleAdminCharacterCardsCreate(request, response) {
@@ -9049,12 +9376,31 @@ const server = http.createServer((request, response) => {
   }
 
   if (request.method === 'PUT' && requestUrl.pathname === '/api/age-chronicle/cell-note') {
-    void handleAgeChronicleCellNoteSave(request, response)
+    writeJson(response, 410, {
+      message: '年龄工具已停用备注功能。',
+      ok: false,
+    }, { headers: appendCorsHeaders(request) })
     return
   }
 
   if (request.method === 'GET' && requestUrl.pathname === '/api/vertical-timeline/state') {
     handleVerticalTimelineStateGet(request, response, requestUrl)
+    return
+  }
+
+  if (request.method === 'GET' && requestUrl.pathname === '/api/character-cards') {
+    handleCharacterCardsGet(request, response)
+    return
+  }
+
+  const characterCardMatch = /^\/api\/character-cards\/([^/]+)$/u.exec(requestUrl.pathname)
+
+  if (request.method === 'PATCH' && characterCardMatch) {
+    void handleCharacterCardUpdate(
+      request,
+      response,
+      decodeURIComponent(characterCardMatch[1]),
+    )
     return
   }
 
@@ -9175,7 +9521,6 @@ const server = http.createServer((request, response) => {
     writeJson(response, 200, {
       endpoints: {
         adminAuthLoginEvents: '/api/admin/auth-login-events',
-        ageChronicleCellNote: '/api/age-chronicle/cell-note',
         ageChronicleEntries: '/api/age-chronicle/entries',
         ageChronicleState: '/api/age-chronicle/state',
         authAccessKey: '/api/auth/access-key',
@@ -9265,6 +9610,16 @@ websocketServer.on('connection', (socket, request) => {
 
     if (payload.type === 'send_message') {
       handleChatMessage(state, socket, payload)
+      return
+    }
+
+    if (payload.type === 'send_check') {
+      handleSendCheck(state, socket, payload)
+      return
+    }
+
+    if (payload.type === 'load_history') {
+      handleLoadHistory(state, socket, payload)
       return
     }
 

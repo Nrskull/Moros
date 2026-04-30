@@ -9,6 +9,7 @@
     createdByUserId: string | null
     description: string
     id: string
+    isHidden: boolean
     name: string
     tags: string[]
     updatedAt: number
@@ -28,6 +29,7 @@
 
   let draftWorldviewCoverImage = ''
   let draftWorldviewDescription = ''
+  let draftWorldviewIsHidden = false
   let draftWorldviewName = ''
   let draftWorldviewTagsText = '#世界观'
   let editingManagedWorldviewId = ''
@@ -50,6 +52,7 @@
     editingManagedWorldviewId = ''
     draftWorldviewName = ''
     draftWorldviewDescription = ''
+    draftWorldviewIsHidden = false
     draftWorldviewTagsText = '#世界观'
     draftWorldviewCoverImage = ''
     worldviewManagementError = ''
@@ -59,6 +62,7 @@
     editingManagedWorldviewId = worldview.id
     draftWorldviewName = worldview.name
     draftWorldviewDescription = worldview.description
+    draftWorldviewIsHidden = worldview.isHidden === true
     draftWorldviewTagsText = formatTags(worldview.tags)
     draftWorldviewCoverImage = worldview.coverImage ?? ''
     worldviewManagementError = ''
@@ -129,6 +133,7 @@
           body: JSON.stringify({
             coverImage,
             description,
+            isHidden: draftWorldviewIsHidden,
             name,
             tags,
           }),
@@ -146,6 +151,54 @@
       statusMessage = '世界观已保存。'
     } catch {
       worldviewManagementError = '世界观服务暂时不可用。'
+    } finally {
+      isWorldviewSaving = false
+    }
+  }
+
+  async function saveWorldviewHiddenState(nextIsHidden: boolean): Promise<void> {
+    draftWorldviewIsHidden = nextIsHidden
+
+    if (editingManagedWorldviewId === '') {
+      return
+    }
+
+    const worldview = managedWorldviews.find((entry) => entry.id === editingManagedWorldviewId)
+
+    if (!worldview) {
+      worldviewManagementError = '请先选择一个世界观。'
+      return
+    }
+
+    isWorldviewSaving = true
+    statusMessage = nextIsHidden ? '正在隐藏世界观...' : '正在恢复世界观...'
+    worldviewManagementError = ''
+
+    try {
+      const payload = await requestWorldviewApi(`/worldviews/${encodeURIComponent(worldview.id)}`, {
+        body: JSON.stringify({
+          coverImage: worldview.coverImage ?? '',
+          description: worldview.description,
+          isHidden: nextIsHidden,
+          name: worldview.name,
+          tags: worldview.tags,
+        }),
+        method: 'PATCH',
+      })
+
+      if (!payload.ok || !payload.worldview) {
+        draftWorldviewIsHidden = worldview.isHidden === true
+        worldviewManagementError = payload.message ?? '更新世界观隐藏状态失败。'
+        statusMessage = ''
+        return
+      }
+
+      await onSaved(payload)
+      statusMessage = nextIsHidden ? '世界观已全局隐藏。' : '世界观已恢复显示。'
+    } catch {
+      draftWorldviewIsHidden = worldview.isHidden === true
+      worldviewManagementError = '世界观服务暂时不可用。'
+      statusMessage = ''
     } finally {
       isWorldviewSaving = false
     }
@@ -191,7 +244,12 @@
               onclick={() => startEditWorldview(worldview)}
               type="button"
             >
-              <strong>{worldview.name}</strong>
+              <div class="worldview-item-title">
+                <strong>{worldview.name}</strong>
+                {#if worldview.isHidden}
+                  <small>已隐藏</small>
+                {/if}
+              </div>
               <span>{worldview.description || '暂无简介'}</span>
               <em>{worldview.tags.length > 0 ? worldview.tags.join(' · ') : '暂无标签'}</em>
             </button>
@@ -243,6 +301,19 @@
             placeholder="/background.jpg"
             type="text"
           />
+        </label>
+
+        <label class="worldview-visibility-toggle">
+          <input
+            bind:checked={draftWorldviewIsHidden}
+            disabled={isWorldviewSaving}
+            onchange={(event) => void saveWorldviewHiddenState((event.currentTarget as HTMLInputElement).checked)}
+            type="checkbox"
+          />
+          <span>
+            <strong>全局隐藏该世界观</strong>
+            <small>编辑已有世界观时会立即保存；隐藏后普通页面、切换菜单、时间线、日志、年龄工具等入口不再展示。</small>
+          </span>
         </label>
 
         {#if worldviewManagementError !== ''}
@@ -374,6 +445,24 @@
     cursor: pointer;
   }
 
+  .worldview-item-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .worldview-item-title small {
+    flex: none;
+    border: 1px solid var(--accent-border);
+    border-radius: 999px;
+    padding: 2px 7px;
+    background: var(--accent-surface);
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.2;
+  }
+
   .worldview-item.selected {
     border-color: var(--accent-border-strong);
     background: var(--accent-surface);
@@ -405,6 +494,35 @@
 
   .error-text {
     color: #991b1b;
+  }
+
+  .worldview-visibility-toggle {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px;
+    background: var(--panel-strong);
+  }
+
+  .worldview-visibility-toggle input {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    padding: 0;
+  }
+
+  .worldview-visibility-toggle span {
+    display: grid;
+    gap: 3px;
+    color: var(--text);
+  }
+
+  .worldview-visibility-toggle small {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
   }
 
   .form-actions {

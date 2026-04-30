@@ -20,9 +20,9 @@
     </button>
 
     <button class="tool-overview-card" type="button" onclick={onOpenCharacterSheet}>
-      <span class="tool-overview-kicker">占位</span>
+      <span class="tool-overview-kicker">已启用</span>
       <strong>车卡</strong>
-      <p>角色卡工具入口，功能暂时留空。</p>
+      <p>按空白卡.xlsx 的职业、技能和本职点公式进行基础车卡录入。</p>
     </button>
   </div>
 </section>

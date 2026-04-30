@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte'
-  import { worldviewContents } from '../content/worldviews'
+  import {
+    resolveBaseSkillValue,
+    type CharacterSheetAttributes,
+  } from './character-sheet-engine'
+  import {
+    characterSheetBaseSkills,
+  } from './character-sheet-data'
   import {
     buildChatHttpUrl,
     buildChatWebSocketUrl,
@@ -102,6 +108,14 @@
     type: 'room_history_cleared'
   }
 
+  interface ChatHistoryLoadedPayload {
+    beforeSequence: number
+    hasMore: boolean
+    messages: ChatMessage[]
+    roomId: string
+    type: 'history_loaded'
+  }
+
   interface ChatRecordingState {
     roomId: string
     roomName: string
@@ -140,6 +154,7 @@
     | ChatAuthRequiredPayload
     | ChatCharacterStatePayload
     | ChatErrorPayload
+    | ChatHistoryLoadedPayload
     | ChatJoinedPayload
     | ChatMessagePayload
     | ChatMessageUpdatedPayload
@@ -175,6 +190,8 @@
   }
 
   export let authResetKey = 0
+  export let activeCharacterId: string | null = null
+  export let characterCards: ChatCharacterCard[] = []
   export let mobileMenuItems: ChatMobileMenuItem[] = []
   export let onAuthStateChange: ((currentUser: ChatUser | null) => void) | undefined = undefined
   export let worldviewOptions: string[] = []
@@ -198,10 +215,22 @@
     { key: 'appearance', label: '外貌' },
     { key: 'willpower', label: '意志' },
   ]
+  const ATTRIBUTE_LABEL_TO_KEY: Record<string, AttributeKey> = {
+    力量: 'strength',
+    外貌: 'appearance',
+    幸运: 'luck',
+    意志: 'willpower',
+    教育: 'education',
+    敏捷: 'dexterity',
+    智力: 'intelligence',
+    体型: 'size',
+    体质: 'constitution',
+  }
 
   const AVATAR_CROP_VIEWPORT_SIZE = 220
   const AVATAR_CROP_OUTPUT_SIZE = 320
-  const STATIC_DEFAULT_CHARACTER_WORLDVIEW = worldviewContents[0]?.name ?? ''
+  const HISTORY_LOAD_TOP_THRESHOLD = 64
+  const MAX_HISTORY_LIMIT = 80
   const DEFAULT_CHARACTER_COLOR = '#64748b'
 
   let characterMenuElement: HTMLDivElement | null = null
@@ -230,10 +259,11 @@
   let currentUser: ChatUser | null = null
   let isAdminUser = false
   let availableCharacterWorldviews: string[] = []
-  let defaultCharacterWorldview = STATIC_DEFAULT_CHARACTER_WORLDVIEW
-  let characterCards: ChatCharacterCard[] = []
-  let activeCharacterId: string | null = null
+  let defaultCharacterWorldview = ''
   let messages: ChatMessage[] = []
+  let isLoadingHistory = false
+  let hasMoreHistory = false
+  let oldestLoadedSequence = 0
   let members: ChatMember[] = []
   let manageableUsers: ChatUser[] = []
   let roomPermissions: ChatRoomPermission[] = []
@@ -256,13 +286,13 @@
   let isRecordMenuOpen = false
   let isRecordPromptOpen = false
   let recordNameDraft = ''
-  let recordWorldviewDraft = STATIC_DEFAULT_CHARACTER_WORLDVIEW
+  let recordWorldviewDraft = ''
   let recordError = ''
   let activeRecording: ChatRecordingState | null = null
   let isRecordEnding = false
   let isCreateCharacterPromptOpen = false
   let createCharacterNameDraft = ''
-  let createCharacterWorldviewDraft = STATIC_DEFAULT_CHARACTER_WORLDVIEW
+  let createCharacterWorldviewDraft = ''
   let createCharacterColorDraft = DEFAULT_CHARACTER_COLOR
   let createCharacterError = ''
   let createCharacterAttributesDraft: ChatCharacterAttributes = createEmptyCharacterAttributes()
@@ -271,7 +301,7 @@
   let isEditCharacterPromptOpen = false
   let editCharacterId = ''
   let editCharacterNameDraft = ''
-  let editCharacterWorldviewDraft = STATIC_DEFAULT_CHARACTER_WORLDVIEW
+  let editCharacterWorldviewDraft = ''
   let editCharacterColorDraft = DEFAULT_CHARACTER_COLOR
   let editCharacterError = ''
   let editCharacterAttributesDraft: ChatCharacterAttributes = createEmptyCharacterAttributes()
@@ -396,12 +426,12 @@
   $: isAdminUser = currentUser?.role === 'admin'
   $: availableCharacterWorldviews = [
     ...new Set(
-      (worldviewOptions.length > 0 ? worldviewOptions : worldviewContents.map((worldview) => worldview.name))
+      worldviewOptions
         .map((value) => value.trim())
         .filter(Boolean),
     ),
   ]
-  $: defaultCharacterWorldview = availableCharacterWorldviews[0] ?? STATIC_DEFAULT_CHARACTER_WORLDVIEW
+  $: defaultCharacterWorldview = availableCharacterWorldviews[0] ?? ''
   $: if (createCharacterWorldviewDraft !== '' && !availableCharacterWorldviews.includes(createCharacterWorldviewDraft)) {
     createCharacterWorldviewDraft = defaultCharacterWorldview
   }
@@ -1226,6 +1256,60 @@
     unreadIncomingCount += addedExternalCount
   }
 
+  function updateHistoryPaginationState(
+    messageList: ChatMessage[],
+    options?: { hasMore?: boolean },
+  ): void {
+    oldestLoadedSequence = messageList[0]?.sequence ?? 0
+    hasMoreHistory = options?.hasMore ?? (messageList.length >= MAX_HISTORY_LIMIT && oldestLoadedSequence > 0)
+
+    if (messageList.length === 0) {
+      hasMoreHistory = false
+    }
+  }
+
+  function resetHistoryPaginationState(messageList: ChatMessage[] = []): void {
+    isLoadingHistory = false
+    updateHistoryPaginationState(messageList)
+  }
+
+  async function prependHistoryMessages(
+    incoming: ChatMessage[],
+    options?: { hasMore?: boolean },
+  ): Promise<void> {
+    if (incoming.length === 0) {
+      isLoadingHistory = false
+      hasMoreHistory = options?.hasMore ?? false
+      return
+    }
+
+    const knownSequences = new Set(messages.map((message) => message.sequence))
+    const prependedMessages = incoming.filter((message) => !knownSequences.has(message.sequence))
+    const nextMessages =
+      prependedMessages.length > 0 ? normaliseMessages([...prependedMessages, ...messages]) : messages
+
+    updateHistoryPaginationState(nextMessages, { hasMore: options?.hasMore })
+
+    if (prependedMessages.length === 0) {
+      isLoadingHistory = false
+      return
+    }
+
+    const previousScrollHeight = messageViewportElement?.scrollHeight ?? 0
+    const previousScrollTop = messageViewportElement?.scrollTop ?? 0
+
+    messages = nextMessages
+
+    await tick()
+
+    if (messageViewportElement) {
+      const scrollHeightDelta = messageViewportElement.scrollHeight - previousScrollHeight
+      messageViewportElement.scrollTop = previousScrollTop + scrollHeightDelta
+    }
+
+    isLoadingHistory = false
+  }
+
   function normaliseMessages(incoming: ChatMessage[]): ChatMessage[] {
     const messagesBySequence = new Map<number, ChatMessage>()
 
@@ -1259,7 +1343,37 @@
   async function replaceMessages(incoming: ChatMessage[]): Promise<void> {
     messages = normaliseMessages(incoming)
     unreadIncomingCount = 0
+    resetHistoryPaginationState(messages)
     await scrollMessagesToBottom('auto')
+  }
+
+  function loadOlderMessages(): void {
+    if (
+      isLoadingHistory ||
+      !hasMoreHistory ||
+      messages.length === 0 ||
+      !socket ||
+      socket.readyState !== WebSocket.OPEN ||
+      connectionState !== 'connected'
+    ) {
+      return
+    }
+
+    const beforeSequence = oldestLoadedSequence || messages[0]?.sequence || 0
+
+    if (beforeSequence <= 0) {
+      hasMoreHistory = false
+      return
+    }
+
+    isLoadingHistory = true
+    socket.send(
+      JSON.stringify({
+        beforeSequence,
+        roomId: activeRoomId,
+        type: 'load_history',
+      }),
+    )
   }
 
   function applyCharacterState(payload: {
@@ -1587,6 +1701,7 @@
     characterCards = []
     activeCharacterId = null
     messages = []
+    resetHistoryPaginationState()
     members = []
     manageableUsers = []
     roomPermissions = []
@@ -1631,6 +1746,7 @@
 
     if (payload.type === 'joined') {
       const isSameRoom = room.id === payload.room.id
+      const hadMessages = messages.length > 0
       room = payload.room
       rooms = payload.rooms.length > 0 ? payload.rooms : [payload.room]
       activeRoomId = payload.room.id
@@ -1650,6 +1766,10 @@
 
       if (isSameRoom) {
         await mergeMessages(payload.messages, { forceScroll: messages.length === 0 })
+
+        if (!hadMessages) {
+          resetHistoryPaginationState(normaliseMessages(payload.messages))
+        }
       } else {
         await replaceMessages(payload.messages)
       }
@@ -1675,6 +1795,15 @@
 
     if (payload.type === 'message_updated') {
       applyUpdatedMessage(payload.message)
+      return
+    }
+
+    if (payload.type === 'history_loaded') {
+      if (payload.roomId !== activeRoomId) {
+        return
+      }
+
+      await prependHistoryMessages(payload.messages, { hasMore: payload.hasMore })
       return
     }
 
@@ -1727,6 +1856,7 @@
       if (payload.roomId === activeRoomId) {
         messages = []
         unreadIncomingCount = 0
+        resetHistoryPaginationState()
       }
 
       if (isRoomPermissionsPromptOpen && roomPermissionsRoomId === payload.roomId) {
@@ -1850,6 +1980,7 @@
       }
 
       socket = null
+      isLoadingHistory = false
 
       if (!shouldReconnect || !currentUser) {
         connectionState = 'disconnected'
@@ -1975,6 +2106,76 @@
     void sendMessage()
   }
 
+  function normaliseCheckLabel(value: string): string {
+    return value.replace(/[①②③④⑤⑥⑦⑧⑨Ω：:（）()／/、，。,\.\s-]/gu, '').trim()
+  }
+
+  function mapChatAttributesToCharacterSheet(attributes: ChatCharacterAttributes): CharacterSheetAttributes {
+    return {
+      APP: attributes.appearance,
+      CON: attributes.constitution,
+      DEX: attributes.dexterity,
+      EDU: attributes.education,
+      INT: attributes.intelligence,
+      LUCK: attributes.luck,
+      POW: attributes.willpower,
+      SIZ: attributes.size,
+      STR: attributes.strength,
+    }
+  }
+
+  function parseCheckCommand(body: string): string | null {
+    const matched = /^\.ra\s*(.+?)\s*$/u.exec(body)
+    return matched ? matched[1] : null
+  }
+
+  function resolveCheckCommandTarget(
+    character: ChatCharacterCard | null,
+    body: string,
+  ): { label: string; targetValue: number } | null {
+    const label = parseCheckCommand(body)
+
+    if (!label || !character) {
+      return null
+    }
+
+    const attributeKey = ATTRIBUTE_LABEL_TO_KEY[label]
+
+    if (attributeKey) {
+      return {
+        label,
+        targetValue: character.attributes[attributeKey],
+      }
+    }
+
+    const normalisedLabel = normaliseCheckLabel(label)
+    const skill = (character.skills ?? []).find(
+      (entry) => normaliseCheckLabel(entry.name) === normalisedLabel,
+    )
+
+    if (skill) {
+      return {
+        label: skill.name,
+        targetValue: skill.totalValue,
+      }
+    }
+
+    const defaultSkill = characterSheetBaseSkills.find(
+      (entry) => normaliseCheckLabel(entry.name) === normalisedLabel,
+    )
+
+    if (!defaultSkill) {
+      return null
+    }
+
+    const attributeState = mapChatAttributesToCharacterSheet(character.attributes)
+
+    return {
+      label: defaultSkill.name,
+      targetValue: resolveBaseSkillValue(defaultSkill.name, attributeState, defaultSkill.baseValue),
+    }
+  }
+
   function switchActiveCharacter(nextCharacterId: string): void {
     const safeCharacterId = nextCharacterId.trim()
 
@@ -2008,6 +2209,38 @@
 
     if (!socket || socket.readyState !== WebSocket.OPEN || connectionState !== 'connected') {
       connectionError = '当前未连接群聊，无法发送消息。'
+      return
+    }
+
+    const checkCommand = resolveCheckCommandTarget(activeCharacter, messageBody)
+
+    if (messageBody.startsWith('.ra')) {
+      if (!activeCharacterId || !activeCharacter) {
+        connectionError = '请先选择角色卡，再进行检定。'
+        return
+      }
+
+      if (!checkCommand) {
+        connectionError = '未找到对应属性或技能。请使用 .ra力量 或 .ra侦查 这样的格式。'
+        return
+      }
+
+      socket.send(
+        JSON.stringify({
+          label: checkCommand.label,
+          replyToMessageId: replyTarget?.id ?? null,
+          roomId: room.id,
+          targetValue: checkCommand.targetValue,
+          type: 'send_check',
+        }),
+      )
+
+      draftMessage = ''
+      clearReplyTarget()
+      connectionError = ''
+      await tick()
+      resizeComposerTextarea()
+      await scrollMessagesToBottom()
       return
     }
 
@@ -2343,6 +2576,7 @@
 
     connectionState = 'connecting'
     messages = []
+    resetHistoryPaginationState()
     members = []
 
     socket.send(
@@ -2456,11 +2690,13 @@
   }
 
   function handleMessageViewportScroll(): void {
-    if (!isViewportNearBottom()) {
-      return
+    if (messageViewportElement && messageViewportElement.scrollTop <= HISTORY_LOAD_TOP_THRESHOLD) {
+      loadOlderMessages()
     }
 
-    unreadIncomingCount = 0
+    if (isViewportNearBottom()) {
+      unreadIncomingCount = 0
+    }
   }
 
   onMount(() => {
@@ -2736,24 +2972,6 @@
                     type="file"
                   />
                 {/if}
-              </div>
-
-              <div class="chat-character-grid">
-                {#each ATTRIBUTE_FIELDS as field}
-                  <label class="chat-character-field">
-                    <span>{field.label}</span>
-                    <input
-                      max="100"
-                      min="0"
-                      oninput={(event) =>
-                        isCreateCharacterPromptOpen
-                          ? handleCharacterAttributeInput(field.key, event)
-                          : handleEditCharacterAttributeInput(field.key, event)}
-                      type="number"
-                      value={activeCharacterDraft[field.key]}
-                    />
-                  </label>
-                {/each}
               </div>
 
               {#if isCreateCharacterPromptOpen && createCharacterError !== ''}

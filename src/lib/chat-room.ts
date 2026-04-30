@@ -32,6 +32,16 @@ export interface ChatCharacterAttributes {
   willpower: number
 }
 
+export interface ChatCharacterSkill {
+  growthPoints: number
+  id: string
+  interestPoints: number
+  name: string
+  occupationPoints: number
+  originalName: string
+  totalValue: number
+}
+
 export interface ChatCharacterCard {
   attributes: ChatCharacterAttributes
   avatarDataUrl: string | null
@@ -40,6 +50,7 @@ export interface ChatCharacterCard {
   isDefault: boolean
   name: string
   presentationMode: ChatPresentationMode
+  skills?: ChatCharacterSkill[]
   status: string
   userId?: string | null
   worldview: string

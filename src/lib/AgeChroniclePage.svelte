@@ -22,31 +22,19 @@
 
   const colorPool = ['#a46245', '#4d7b95', '#7c6497', '#5a8b64', '#b06f8d', '#9a7a42']
   const CREATE_CHRONICLE_PANEL_ID = 'create'
-  const DEFAULT_CHRONICLE_NOTE = '补充这一节点的事件背景或阶段说明。'
-  const AGE_CELL_DESCRIPTION_PLACEHOLDER = '记录这一年的状态、事件或身份变化。'
   const AGE_CHRONICLE_CACHE_KEY_PREFIX = 'morosonder:age-chronicle:cache:v2'
   const AGE_CHRONICLE_VIEW_KEY_PREFIX = 'morosonder:age-chronicle:view:v2'
 
   interface AgeChronicleCapabilities {
     canCreateEntry: boolean
-    canEditOwnCellNote: boolean
     canEditSharedStructure: boolean
     canManageEntry: boolean
   }
 
-  interface AgeChronicleAdminCellNote {
-    authorDisplayName: string
-    authorUserId: string
-    body: string
-    updatedAt: number
-  }
-
   interface AgeChronicleServerState {
-    adminCellNotes: Record<string, AgeChronicleAdminCellNote[]>
     characterProfiles: CharacterAgeProfile[]
     chronicleEntries: ChronicleEntry[]
     nextCharacterIndex: number
-    ownCellDescriptions: Record<string, string>
   }
 
   interface AgeChronicleCachedState {
@@ -81,38 +69,27 @@
   let isAuthPromptOpen = false
   let isSavingStructure = false
   let entryMutationTargetId = ''
-  let isSavingCellNote = false
   let loadedWorldviewName = ''
   let loadedViewPreferenceKey = ''
 
   let chronicleEntries: ChronicleEntry[] = cloneChronicleEntries(sampleChronicleEntries)
   let characterProfiles: CharacterAgeProfile[] = cloneCharacterProfiles(sampleCharacterProfiles)
   let hiddenCharacterIds: string[] = []
-  let ownCellDescriptions: Record<string, string> = {}
-  let adminCellNotes: Record<string, AgeChronicleAdminCellNote[]> = {}
   let nextCharacterIndex = sampleCharacterProfiles.length
 
   let activeChroniclePanelId = CREATE_CHRONICLE_PANEL_ID
   let draftChronicleYear = getNextChronicleYear(sampleChronicleEntries)
   let draftChronicleLabel = `新编年 ${draftChronicleYear}`
-  let draftChronicleNote = DEFAULT_CHRONICLE_NOTE
   let draftChronicleVisibility: ChronicleVisibility = 'private'
 
   let entryDraftLabel = ''
   let entryDraftYear = 0
-  let entryDraftNote = ''
   let entryDraftVisibility: ChronicleVisibility = 'private'
 
   let draftCharacterName = `新角色 ${nextCharacterIndex + 1}`
   let draftCharacterAnchorYear = sampleChronicleEntries[0]?.year ?? 0
   let draftCharacterAnchorAge = 16
   let draftCharacterColor = colorPool[nextCharacterIndex % colorPool.length]
-
-  let isCellDescriptionPromptOpen = false
-  let activeDescriptionProfileId = ''
-  let activeDescriptionEntryId = ''
-  let activeCellDescriptionDraft = ''
-  let cellDescriptionError = ''
 
   $: sortedChronicleEntries = [...chronicleEntries].sort((left, right) => {
     if (left.year !== right.year) {
@@ -126,33 +103,9 @@
     (profile) => !hiddenCharacterIds.includes(profile.id),
   )
 
-  $: activeDescriptionProfile =
-    activeDescriptionProfileId === ''
-      ? null
-      : characterProfiles.find((profile) => profile.id === activeDescriptionProfileId) ?? null
-
-  $: activeDescriptionEntry =
-    activeDescriptionEntryId === ''
-      ? null
-      : chronicleEntries.find((entry) => entry.id === activeDescriptionEntryId) ?? null
-
-  $: activeDescriptionKey =
-    activeDescriptionProfileId !== '' && activeDescriptionEntryId !== ''
-      ? createAgeCellDescriptionKey(activeDescriptionProfileId, activeDescriptionEntryId)
-      : ''
-
-  $: activeAdminCellNoteList =
-    activeDescriptionKey === ''
-      ? []
-      : [...(adminCellNotes[activeDescriptionKey] ?? [])].sort(
-          (left, right) => right.updatedAt - left.updatedAt,
-        )
-
   $: canCreateChronicleEntry = !isReadOnlyFallback && capabilities.canCreateEntry
   $: canManageChronicleEntries = !isReadOnlyFallback && capabilities.canManageEntry
   $: canEditSharedStructure = !isReadOnlyFallback && capabilities.canEditSharedStructure
-  $: canEditOwnCellNote = !isReadOnlyFallback && capabilities.canEditOwnCellNote
-  $: isAdminCurrentUser = currentUser?.role === 'admin'
 
   $: if (loadedViewPreferenceKey !== '') {
     loadedViewPreferenceKey
@@ -164,13 +117,6 @@
     void loadSharedAgeChronicleState(worldviewName)
   }
 
-  $: if (
-    isCellDescriptionPromptOpen &&
-    (activeDescriptionProfile === null || activeDescriptionEntry === null)
-  ) {
-    closeCellDescriptionPrompt()
-  }
-
   function cloneChronicleEntries(entries: ChronicleEntry[]): ChronicleEntry[] {
     return entries.map((entry) => ({ ...entry }))
   }
@@ -179,28 +125,12 @@
     return profiles.map((profile) => ({ ...profile }))
   }
 
-  function cloneAdminCellNotes(
-    notes: Record<string, AgeChronicleAdminCellNote[]>,
-  ): Record<string, AgeChronicleAdminCellNote[]> {
-    return Object.fromEntries(
-      Object.entries(notes).map(([key, value]) => [
-        key,
-        value.map((note) => ({ ...note })),
-      ]),
-    )
-  }
-
   function createEmptyCapabilities(): AgeChronicleCapabilities {
     return {
       canCreateEntry: false,
-      canEditOwnCellNote: false,
       canEditSharedStructure: false,
       canManageEntry: false,
     }
-  }
-
-  function createAgeCellDescriptionKey(profileId: string, entryId: string): string {
-    return `${profileId}::${entryId}`
   }
 
   function getChronicleAnchorYear(entries: ChronicleEntry[]): number {
@@ -320,94 +250,6 @@
     )
   }
 
-  function sanitiseOwnCellDescriptions(
-    input: unknown,
-    profiles: CharacterAgeProfile[],
-    entries: ChronicleEntry[],
-  ): Record<string, string> {
-    if (!isRecord(input)) {
-      return {}
-    }
-
-    const validProfileIds = new Set(profiles.map((profile) => profile.id))
-    const validEntryIds = new Set(entries.map((entry) => entry.id))
-
-    return Object.entries(input).reduce<Record<string, string>>((map, [key, value]) => {
-      if (typeof value !== 'string' || value.trim() === '') {
-        return map
-      }
-
-      const [profileId, entryId] = key.split('::')
-
-      if (!validProfileIds.has(profileId) || !validEntryIds.has(entryId)) {
-        return map
-      }
-
-      map[key] = value
-      return map
-    }, {})
-  }
-
-  function sanitiseAdminCellNotes(
-    input: unknown,
-    profiles: CharacterAgeProfile[],
-    entries: ChronicleEntry[],
-  ): Record<string, AgeChronicleAdminCellNote[]> {
-    if (!isRecord(input)) {
-      return {}
-    }
-
-    const validProfileIds = new Set(profiles.map((profile) => profile.id))
-    const validEntryIds = new Set(entries.map((entry) => entry.id))
-
-    return Object.entries(input).reduce<Record<string, AgeChronicleAdminCellNote[]>>(
-      (map, [key, value]) => {
-        if (!Array.isArray(value)) {
-          return map
-        }
-
-        const [profileId, entryId] = key.split('::')
-
-        if (!validProfileIds.has(profileId) || !validEntryIds.has(entryId)) {
-          return map
-        }
-
-        const notes = value.flatMap((item): AgeChronicleAdminCellNote[] => {
-          if (!isRecord(item)) {
-            return []
-          }
-
-          const authorUserId = typeof item.authorUserId === 'string' ? item.authorUserId.trim() : ''
-          const body = typeof item.body === 'string' ? item.body : ''
-          const updatedAt = Number(item.updatedAt)
-
-          if (authorUserId === '' || body.trim() === '' || !Number.isFinite(updatedAt)) {
-            return []
-          }
-
-          return [
-            {
-              authorDisplayName:
-                typeof item.authorDisplayName === 'string' && item.authorDisplayName.trim() !== ''
-                  ? item.authorDisplayName.trim()
-                  : '未知用户',
-              authorUserId,
-              body,
-              updatedAt,
-            },
-          ]
-        })
-
-        if (notes.length > 0) {
-          map[key] = notes
-        }
-
-        return map
-      },
-      {},
-    )
-  }
-
   function resolveNextStoredIndex(
     input: unknown,
     prefix: string,
@@ -434,7 +276,6 @@
 
     return {
       canCreateEntry: input.canCreateEntry === true,
-      canEditOwnCellNote: input.canEditOwnCellNote === true,
       canEditSharedStructure: input.canEditSharedStructure === true,
       canManageEntry: input.canManageEntry === true,
     }
@@ -454,20 +295,13 @@
 
     if (nextChronicleEntries.length === 0 && nextCharacterProfiles.length === 0) {
       return {
-        adminCellNotes: {},
         characterProfiles: [],
         chronicleEntries: [],
         nextCharacterIndex: 0,
-        ownCellDescriptions: {},
       }
     }
 
     return {
-      adminCellNotes: sanitiseAdminCellNotes(
-        input.adminCellNotes,
-        nextCharacterProfiles,
-        nextChronicleEntries,
-      ),
       characterProfiles: nextCharacterProfiles,
       chronicleEntries: nextChronicleEntries,
       nextCharacterIndex: resolveNextStoredIndex(
@@ -475,11 +309,6 @@
         'char_custom_',
         nextCharacterProfiles.map((profile) => profile.id),
         nextCharacterProfiles.length,
-      ),
-      ownCellDescriptions: sanitiseOwnCellDescriptions(
-        input.ownCellDescriptions,
-        nextCharacterProfiles,
-        nextChronicleEntries,
       ),
     }
   }
@@ -497,7 +326,6 @@
     const nextCharacterProfiles = sanitiseCharacterProfiles(input.characterProfiles)
 
     return {
-      adminCellNotes: {},
       characterProfiles: nextCharacterProfiles,
       chronicleEntries: nextChronicleEntries,
       nextCharacterIndex: resolveNextStoredIndex(
@@ -506,21 +334,14 @@
         nextCharacterProfiles.map((profile) => profile.id),
         nextCharacterProfiles.length,
       ),
-      ownCellDescriptions: sanitiseOwnCellDescriptions(
-        input.cellDescriptions,
-        nextCharacterProfiles,
-        nextChronicleEntries,
-      ),
     }
   }
 
   function createDefaultAgeChronicleState(): AgeChronicleServerState {
     return {
-      adminCellNotes: {},
       characterProfiles: cloneCharacterProfiles(sampleCharacterProfiles),
       chronicleEntries: cloneChronicleEntries(sampleChronicleEntries),
       nextCharacterIndex: sampleCharacterProfiles.length,
-      ownCellDescriptions: {},
     }
   }
 
@@ -666,8 +487,6 @@
   ): void {
     chronicleEntries = cloneChronicleEntries(state.chronicleEntries)
     characterProfiles = cloneCharacterProfiles(state.characterProfiles)
-    ownCellDescriptions = { ...state.ownCellDescriptions }
-    adminCellNotes = cloneAdminCellNotes(state.adminCellNotes)
     nextCharacterIndex = state.nextCharacterIndex
     loadedWorldviewName = targetWorldview
     loadViewPreferences(targetWorldview, state.characterProfiles)
@@ -683,16 +502,6 @@
       } else {
         activeChroniclePanelId = CREATE_CHRONICLE_PANEL_ID
       }
-    }
-
-    if (
-      isCellDescriptionPromptOpen &&
-      activeDescriptionProfileId !== '' &&
-      activeDescriptionEntryId !== ''
-    ) {
-      activeCellDescriptionDraft =
-        ownCellDescriptions[createAgeCellDescriptionKey(activeDescriptionProfileId, activeDescriptionEntryId)] ??
-        ''
     }
 
     writeCachedAgeChronicleState(getAgeChronicleCacheKey(targetWorldview), state, updatedAt)
@@ -895,7 +704,6 @@
   function resetChronicleDraft(): void {
     draftChronicleYear = getNextChronicleYear(chronicleEntries)
     draftChronicleLabel = `新编年 ${draftChronicleYear}`
-    draftChronicleNote = DEFAULT_CHRONICLE_NOTE
     draftChronicleVisibility = 'private'
   }
 
@@ -909,7 +717,6 @@
   function primeEntryDraft(entry: ChronicleEntry): void {
     entryDraftLabel = entry.label
     entryDraftYear = entry.year
-    entryDraftNote = entry.note
     entryDraftVisibility = entry.visibility
   }
 
@@ -955,7 +762,6 @@
 
     const year = normaliseNumber(draftChronicleYear, getNextChronicleYear(chronicleEntries))
     const label = draftChronicleLabel.trim() || `新编年 ${year}`
-    const note = draftChronicleNote.trim()
 
     entryMutationTargetId = CREATE_CHRONICLE_PANEL_ID
 
@@ -963,7 +769,6 @@
       const { payload, status } = await requestAgeChronicleApi('/age-chronicle/entries', {
         body: JSON.stringify({
           label,
-          note,
           visibility: draftChronicleVisibility,
           worldview: worldviewName,
           year,
@@ -1011,7 +816,6 @@
         {
           body: JSON.stringify({
             label: entryDraftLabel.trim() || `新编年 ${normaliseNumber(entryDraftYear, 0)}`,
-            note: entryDraftNote.trim(),
             visibility: entryDraftVisibility,
             worldview: worldviewName,
             year: normaliseNumber(entryDraftYear, 0),
@@ -1223,10 +1027,6 @@
     return `${color}18`
   }
 
-  function getCellDescription(profileId: string, entryId: string): string {
-    return ownCellDescriptions[createAgeCellDescriptionKey(profileId, entryId)] ?? ''
-  }
-
   function getChronicleVisibilityLabel(visibility: ChronicleVisibility): string {
     return visibility === 'public' ? '公开' : '私密'
   }
@@ -1240,7 +1040,7 @@
       return '仅你和管理员可见'
     }
 
-    if (isAdminCurrentUser) {
+    if (currentUser?.role === 'admin') {
       return '仅创建者和管理员可见'
     }
 
@@ -1258,79 +1058,6 @@
       minute: '2-digit',
       month: '2-digit',
     }).format(new Date(timestamp))
-  }
-
-  function openCellDescriptionPrompt(profileId: string, entryId: string): void {
-    activeDescriptionProfileId = profileId
-    activeDescriptionEntryId = entryId
-    activeCellDescriptionDraft = getCellDescription(profileId, entryId)
-    cellDescriptionError = ''
-    isCellDescriptionPromptOpen = true
-  }
-
-  function closeCellDescriptionPrompt(): void {
-    isCellDescriptionPromptOpen = false
-    activeDescriptionProfileId = ''
-    activeDescriptionEntryId = ''
-    activeCellDescriptionDraft = ''
-    cellDescriptionError = ''
-  }
-
-  async function saveCellDescriptionDraft(): Promise<void> {
-    if (!currentUser) {
-      requestAuthPrompt('保存年龄格备注需要先输入访问密钥。')
-      return
-    }
-
-    if (!canEditOwnCellNote) {
-      cellDescriptionError = isReadOnlyFallback
-        ? '当前处于只读兼容模式，无法写入私密备注。'
-        : '当前账号没有写入年龄格备注的权限。'
-      return
-    }
-
-    if (activeDescriptionProfileId === '' || activeDescriptionEntryId === '') {
-      return
-    }
-
-    isSavingCellNote = true
-    cellDescriptionError = ''
-
-    try {
-      const { payload, status } = await requestAgeChronicleApi('/age-chronicle/cell-note', {
-        body: JSON.stringify({
-          body: activeCellDescriptionDraft.trim(),
-          entryId: activeDescriptionEntryId,
-          profileId: activeDescriptionProfileId,
-          worldview: worldviewName,
-        }),
-        method: 'PUT',
-      })
-
-      if (!payload.ok) {
-        if (status === 401) {
-          currentUser = null
-          capabilities = createEmptyCapabilities()
-          requestAuthPrompt(payload.message ?? '保存年龄格备注需要先输入访问密钥。')
-          return
-        }
-
-        cellDescriptionError = payload.message ?? '保存年龄格备注失败。'
-        return
-      }
-
-      if (!applyAgeChronicleResponse(payload)) {
-        cellDescriptionError = '保存年龄格备注后收到的响应无效。'
-        return
-      }
-
-      sharedSyncError = ''
-      closeCellDescriptionPrompt()
-    } catch {
-      cellDescriptionError = '保存年龄格备注失败，请确认聊天服务已启动。'
-    } finally {
-      isSavingCellNote = false
-    }
   }
 
   onMount(() => {
@@ -1403,11 +1130,6 @@
                       <option value="private">仅自己和管理员可见</option>
                       <option value="public">公开给所有可访问用户</option>
                     </select>
-                  </label>
-
-                  <label class="age-field">
-                    <span>备注</span>
-                    <textarea bind:value={draftChronicleNote} rows="3"></textarea>
                   </label>
 
                   <div class="age-editor-actions">
@@ -1492,11 +1214,6 @@
                       </select>
                     </label>
 
-                    <label class="age-field">
-                      <span>备注</span>
-                      <textarea bind:value={entryDraftNote} rows="3"></textarea>
-                    </label>
-
                     <div class="age-editor-meta">
                       <span>最近更新：{formatMetaTimestamp(entry.updatedAt)}</span>
                       <span>{getChronicleVisibilityHint(entry)}</span>
@@ -1529,11 +1246,6 @@
                         <span>{getChronicleVisibilityHint(entry)}</span>
                         <span>最近更新：{formatMetaTimestamp(entry.updatedAt)}</span>
                       </div>
-                      {#if entry.note.trim() !== ''}
-                        <p>{entry.note}</p>
-                      {:else}
-                        <p>该节点没有补充备注。</p>
-                      {/if}
                     </div>
                   {/if}
                 </div>
@@ -1599,7 +1311,7 @@
                   {#if isReadOnlyFallback}
                     当前无法写入共享角色结构，只保留查看和本地显示隐藏。
                   {:else}
-                    普通用户仍可查看、隐藏本地角色列，并填写自己的私密年龄格备注。
+                    普通用户仍可查看，并按本地偏好隐藏角色列。
                   {/if}
                 </p>
               </div>
@@ -1616,7 +1328,7 @@
           <h2>同一节点下的角色年龄对照</h2>
         </div>
         <div class="age-board-note-stack">
-          <p class="board-note">年龄格备注默认仅作者与管理员可见，管理员可在弹窗内查看全部私密备注。</p>
+          <p class="board-note">年龄工具只保留节点、角色列和年龄对照，不再保存备注。</p>
           {#if sharedSyncError !== ''}
             <p class="board-note age-board-status">{sharedSyncError}</p>
           {/if}
@@ -1698,24 +1410,18 @@
               <div class="age-cell age-chronicle-cell">
                 <strong>{entry.label}</strong>
                 <span>第 {entry.year} 年 · {getChronicleVisibilityLabel(entry.visibility)}</span>
-                {#if entry.note}
-                  <p>{entry.note}</p>
-                {/if}
               </div>
 
               {#each visibleCharacterProfiles as profile (profile.id)}
-                {@const cellDescription = getCellDescription(profile.id, entry.id).trim()}
-                <button
+                <div
                   class="age-cell age-value-cell"
                   style={`--cell-color:${profile.color}; --cell-tint:${getAgeTone(profile.color)};`}
-                  type="button"
-                  onclick={() => openCellDescriptionPrompt(profile.id, entry.id)}
                 >
                   <div class="age-value-meta">
                     <strong>{formatCharacterAge(calculateCharacterAge(entry.year, profile))}</strong>
-                    <span class="age-value-preview">{cellDescription || profile.name}</span>
+                    <span class="age-value-preview">{profile.name}</span>
                   </div>
-                </button>
+                </div>
               {/each}
             </div>
           {/each}
@@ -1724,126 +1430,13 @@
     </section>
   </section>
 
-  {#if isCellDescriptionPromptOpen && activeDescriptionProfile && activeDescriptionEntry}
-    <div class="age-note-overlay">
-      <button
-        aria-label="关闭年度描述弹窗"
-        class="age-note-dismiss"
-        type="button"
-        onclick={closeCellDescriptionPrompt}
-      ></button>
-
-      <div aria-labelledby="age-note-title" aria-modal="true" class="age-note-dialog" role="dialog">
-        <div class="age-note-dialog-head">
-          <div class="age-note-dialog-copy">
-            <span class="section-label">年度描述</span>
-            <h3 id="age-note-title">{activeDescriptionProfile.name} · {activeDescriptionEntry.label}</h3>
-            <p>
-              第 {activeDescriptionEntry.year} 年 ·
-              {formatCharacterAge(calculateCharacterAge(activeDescriptionEntry.year, activeDescriptionProfile))}
-            </p>
-          </div>
-
-          <button class="toolbar-action" type="button" onclick={closeCellDescriptionPrompt}>
-            关闭
-          </button>
-        </div>
-
-        {#if isAdminCurrentUser && activeAdminCellNoteList.length > 0}
-          <section class="age-note-dialog-block">
-            <div class="age-note-dialog-section-head">
-              <strong>该格子的全部私密备注</strong>
-              <span>仅管理员可见</span>
-            </div>
-
-            <div class="age-note-admin-list">
-              {#each activeAdminCellNoteList as note (note.authorUserId)}
-                <article class="age-note-admin-card">
-                  <div class="age-note-admin-meta">
-                    <strong>{note.authorDisplayName}</strong>
-                    <span>{formatMetaTimestamp(note.updatedAt)}</span>
-                  </div>
-                  <p>{note.body}</p>
-                </article>
-              {/each}
-            </div>
-          </section>
-        {/if}
-
-        <section class="age-note-dialog-block">
-          <div class="age-note-dialog-section-head">
-            <strong>我的私密备注</strong>
-            <span>仅你和管理员可见</span>
-          </div>
-
-          {#if !currentUser}
-            <div class="age-editor-lock-note">
-              <strong>保存私密备注需要先登录</strong>
-              <p>输入一次访问密钥后，你就可以在这个年龄格下写入只对自己和管理员可见的备注。</p>
-              <div class="age-editor-actions">
-                <button
-                  class="toolbar-action toolbar-primary"
-                  type="button"
-                  onclick={() => requestAuthPrompt('保存年龄格备注需要先输入访问密钥。')}
-                >
-                  输入密钥
-                </button>
-              </div>
-            </div>
-          {:else}
-            <label class="age-field">
-              <span>描述</span>
-              <textarea
-                bind:value={activeCellDescriptionDraft}
-                disabled={!canEditOwnCellNote}
-                placeholder={AGE_CELL_DESCRIPTION_PLACEHOLDER}
-                rows="6"
-              ></textarea>
-            </label>
-
-            {#if !canEditOwnCellNote}
-              <p class="age-note-dialog-tip">当前处于只读兼容模式，暂时不能修改私密备注。</p>
-            {/if}
-          {/if}
-        </section>
-
-        {#if cellDescriptionError !== ''}
-          <div class="chat-nickname-error">{cellDescriptionError}</div>
-        {/if}
-
-        {#if currentUser}
-          <div class="age-note-dialog-actions">
-            <button
-              class="toolbar-action"
-              disabled={!canEditOwnCellNote || isSavingCellNote}
-              type="button"
-              onclick={() => {
-                activeCellDescriptionDraft = ''
-              }}
-            >
-              清空
-            </button>
-            <button
-              class="toolbar-action toolbar-primary"
-              disabled={!canEditOwnCellNote || isSavingCellNote}
-              type="button"
-              onclick={() => void saveCellDescriptionDraft()}
-            >
-              {isSavingCellNote ? '保存中…' : '保存描述'}
-            </button>
-          </div>
-        {/if}
-      </div>
-    </div>
-  {/if}
-
   {#if isAuthPromptOpen}
     <div class="chat-nickname-overlay">
       <form class="chat-nickname-dialog" onsubmit={handleAccessKeySubmit}>
         <div>
           <span class="section-label">共享同步</span>
           <h3>先输入访问密钥</h3>
-          <p>年龄编年现在依赖共享服务；节点和私密年龄格备注都会按权限写入后端。</p>
+          <p>年龄编年现在依赖共享服务；节点和角色结构会按权限写入后端。</p>
         </div>
 
         <label class="chat-nickname-field">

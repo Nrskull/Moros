@@ -1183,7 +1183,7 @@
         {/if}
         <p class:log-board-note-quiet={view === 'edit'} class="log-board-note">
           {#if view === 'overview'}
-            主入口按世界观排列各个 log 目录。展开世界观后可查看已有记录，并从最下面一行直接新增上传 log。
+            展开世界观后可查看已有记录，或从底部新增上传log。
           {:else if activeLogRecord && view === 'edit'}
             当前日志：{activeLogRecord.title}
           {:else if activeLogRecord}

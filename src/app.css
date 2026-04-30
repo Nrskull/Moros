@@ -14,6 +14,7 @@
   --accent-surface-strong: color-mix(in srgb, var(--accent) 16%, rgba(255, 255, 255, 0.98));
   --accent-border: color-mix(in srgb, var(--accent) 34%, rgba(197, 206, 216, 0.9));
   --accent-border-strong: color-mix(in srgb, var(--accent) 48%, rgba(197, 206, 216, 0.9));
+  --select-caret: #677282;
   --theme-surface-start: #f4f6f8;
   --theme-surface-end: #eef2f5;
   --theme-glow: rgba(191, 208, 224, 0.42);
@@ -87,6 +88,42 @@ button {
 code {
   font-family: var(--font-mono);
   font-size: 0.92rem;
+}
+
+button:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  cursor: pointer;
+  padding-right: 2.35rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--select-caret) 50%),
+    linear-gradient(135deg, var(--select-caret) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) calc(50% - 2px),
+    calc(100% - 11px) calc(50% - 2px);
+  background-repeat: no-repeat;
+  background-size: 5px 5px;
+}
+
+select::-ms-expand {
+  display: none;
 }
 
 .shell {
@@ -3196,8 +3233,11 @@ code {
 }
 
 .tool-overview-kicker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: fit-content;
-  padding: 0.28rem 0.54rem;
+  padding: 0.28rem 0.54rem 0.22rem;
   border-radius: 999px;
   background: var(--accent-surface);
   color: var(--muted);
@@ -6064,6 +6104,7 @@ code {
   --line-strong: rgba(130, 148, 170, 0.72);
   --text: #e8edf4;
   --muted: #9aa7b8;
+  --select-caret: #9aa7b8;
   --accent: #9aaac0;
   --accent-soft: rgba(154, 170, 192, 0.16);
   --accent-surface: color-mix(in srgb, var(--accent) 16%, rgba(17, 24, 35, 0.96));

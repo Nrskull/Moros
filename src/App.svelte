@@ -28,6 +28,7 @@
     buildChatHttpUrl,
     CHAT_STORAGE_ROOM_KEY,
     CHAT_STORAGE_SESSION_KEY,
+    type ChatCharacterCard,
     type ChatUser,
   } from './lib/chat-room'
   import {
@@ -91,6 +92,7 @@
     createdAt: number
     createdByUserId: string | null
     id: string
+    isHidden: boolean
     updatedAt: number
   }
 
@@ -167,6 +169,8 @@
   ]
   const activeCardBounce = spring(0, { stiffness: 0.22, damping: 0.58 })
   const surfaceNudge = spring(0, { stiffness: 0.16, damping: 0.72 })
+  let sharedChatActiveCharacterId: string | null = null
+  let sharedChatCharacterCards: ChatCharacterCard[] = []
 
   function createTrackId(index: number): string {
     return `track_${index + 1}`
@@ -598,7 +602,7 @@
   function resetDraft(): void {
     const activeSource = timelineEvents.find((event) => event.id === activeEventId)
 
-    draftWorldview = selectedWorldview || worldviewOptions[0] || DEFAULT_WORLDVIEW_NAME
+    draftWorldview = selectedWorldview || worldviewOptions[0] || ''
     draftTitle = ''
     draftStartTime = Math.max(0, layout.end)
     draftEndTime = draftStartTime
@@ -1224,11 +1228,11 @@
     const nextPage = normaliseVisiblePage(route.page)
     const detailEvent =
       nextPage === 'event-detail'
-        ? timelineEvents.find((event) => event.id === route.eventId) ?? null
+        ? visibleTimelineEvents.find((event) => event.id === route.eventId) ?? null
         : null
 
     activePage = nextPage
-    detailEventId = nextPage === 'event-detail' ? route.eventId : ''
+    detailEventId = nextPage === 'event-detail' && detailEvent ? route.eventId : ''
     routeWorldviewName = route.worldviewName ?? detailEvent?.worldview ?? null
 
     if (nextPage !== 'event-detail') {
@@ -1304,11 +1308,19 @@
     })
   }
 
+  $: visibleManagedWorldviews = managedWorldviews.filter((entry) => entry.isHidden !== true)
+  $: hiddenManagedWorldviewNames = new Set(
+    managedWorldviews.filter((entry) => entry.isHidden === true).map((entry) => entry.name),
+  )
+  $: visibleTimelineEvents = timelineEvents.filter((event) => !hiddenManagedWorldviewNames.has(event.worldview))
   $: configuredWorldviewNames = managedWorldviews.length > 0
-    ? managedWorldviews.map((entry) => entry.name)
+    ? visibleManagedWorldviews.map((entry) => entry.name)
     : worldviewContents.map((entry) => entry.name)
+  $: visibleTimelineWorldviewNames = visibleTimelineEvents
+    .map((event) => event.worldview)
+    .filter((name) => name !== '')
   $: worldviewOptions = [
-    ...new Set([...configuredWorldviewNames, ...timelineEvents.map((event) => event.worldview)].filter(Boolean)),
+    ...new Set([...configuredWorldviewNames, ...visibleTimelineWorldviewNames].filter(Boolean)),
   ]
   $: if (worldviewOptions.length === 0) {
     selectedWorldview = ''
@@ -1322,8 +1334,8 @@
   }
   $: worldviewEvents =
     selectedWorldview === ''
-      ? timelineEvents
-      : timelineEvents.filter((event) => event.worldview === selectedWorldview)
+      ? visibleTimelineEvents
+      : visibleTimelineEvents.filter((event) => event.worldview === selectedWorldview)
   $: availableTags = [...new Set(worldviewEvents.flatMap((event) => event.tags))]
   $: {
     const nextSelectedTags = selectedTagFilters.filter((tag) => availableTags.includes(tag))
@@ -1397,7 +1409,7 @@
       trackLabel: trackLabelMap.get(sourceEvent?.trackId ?? timelineTracks[0]?.id ?? '') ?? '未分配轨道',
     }
   })
-  $: activeWorldviewName = selectedWorldview || worldviewOptions[0] || DEFAULT_WORLDVIEW_NAME
+  $: activeWorldviewName = worldviewOptions.length > 0 ? selectedWorldview || worldviewOptions[0] : ''
   $: activeWorldviewContent = resolveWorldviewContent(activeWorldviewName)
   $: currentWorldviewTheme = resolveWorldviewTheme(activeWorldviewName)
   $: themeStyle = applyThemeModeToWorldviewStyle(createWorldviewThemeStyle(currentWorldviewTheme))
@@ -1485,7 +1497,7 @@
   $: if (
     activePage === 'event-detail' &&
     detailEventId !== '' &&
-    !timelineEvents.some((event) => event.id === detailEventId)
+    !visibleTimelineEvents.some((event) => event.id === detailEventId)
   ) {
     navigateToPage('timeline', { replace: true })
   }
@@ -2543,7 +2555,12 @@
         worldviewTransitionKey={activeWorldviewName}
       />
     {:else if activePage === 'character-sheet'}
-      <CharacterSheetPage onBack={() => navigateToPage('tools-overview')} />
+      <CharacterSheetPage
+        bind:activeCharacterId={sharedChatActiveCharacterId}
+        bind:characterCards={sharedChatCharacterCards}
+        onBack={() => navigateToPage('tools-overview')}
+        worldviewOptions={worldviewOptions}
+      />
     {:else if activePage === 'log-workbench'}
       <LogWorkbenchPage
         initialWorldviewName={activeWorldviewName}
@@ -2567,14 +2584,16 @@
       />
     {:else if activePage === 'chat-room'}
       <ChatRoomPage
+        bind:activeCharacterId={sharedChatActiveCharacterId}
         authResetKey={chatLogoutSerial}
+        bind:characterCards={sharedChatCharacterCards}
         mobileMenuItems={chatMobileMenuItems}
         onAuthStateChange={handleChatAuthStateChange}
         worldviewOptions={worldviewOptions}
       />
     {:else}
       <EventDetailPage
-        event={timelineEvents.find((event) => event.id === detailEventId) ?? null}
+        event={visibleTimelineEvents.find((event) => event.id === detailEventId) ?? null}
         onBack={closeEventDetail}
         onDelete={deleteFromDetailPage}
         onSave={saveDetailEvent}
