@@ -999,6 +999,8 @@
 
       chatAuthUser = payload.currentUser
       isChatAuthChecking = false
+      sharedChatActiveCharacterId = null
+      sharedChatCharacterCards = []
       accessKeyDraft = ''
       accessKeyError = ''
       await loadManagedWorldviews()
@@ -1121,6 +1123,8 @@
       }
 
       chatAuthUser = null
+      sharedChatActiveCharacterId = null
+      sharedChatCharacterCards = []
       clearUserAgreementAcceptance()
       clearStoredChatIdentity()
       chatLogoutSerial += 1
@@ -2557,7 +2561,7 @@
     {:else if activePage === 'character-sheet'}
       <CharacterSheetPage
         bind:activeCharacterId={sharedChatActiveCharacterId}
-        bind:characterCards={sharedChatCharacterCards}
+        authUserId={chatAuthUser?.id ?? ''}
         onBack={() => navigateToPage('tools-overview')}
         worldviewOptions={worldviewOptions}
       />

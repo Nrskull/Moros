@@ -8437,16 +8437,19 @@ function handleAdminCharacterCardsGet(request, response) {
 }
 
 function handleCharacterCardsGet(request, response) {
+  const authContext = resolveAuthContextFromRequest(request, { forceCookieRefresh: true })
   const headers = appendCorsHeaders(request)
+
+  if (!authContext?.user?.id) {
+    writeJson(response, 401, { message: '请先登录后再查看角色卡。', ok: false }, { headers })
+    return
+  }
 
   try {
     const requestUrl = new URL(request.url, `http://${request.headers.host || 'localhost'}`)
     const worldviewName = sanitiseVerticalTimelineWorldview(requestUrl.searchParams.get('worldview'))
-    const rows = worldviewName === ''
-      ? statementSelectAllCharacterCardsForAdmin.all()
-      : statementSelectCharacterCardsForWorldview.all(worldviewName)
-
-    const cards = rows.map(serialiseCharacter)
+    const cards = getCharacterCardsForUser(authContext.user.id)
+      .filter((card) => worldviewName === '' || card.worldview === worldviewName)
 
     writeJson(response, 200, { cards, ok: true }, { headers })
   } catch (error) {

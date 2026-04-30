@@ -62,7 +62,7 @@
 
   export let onBack: () => void = () => {}
   export let activeCharacterId: string | null = null
-  export let characterCards: ChatCharacterCard[] = []
+  export let authUserId = ''
   export let worldviewOptions: string[] = []
 
   const ATTRIBUTE_FIELDS: Array<{ key: CharacterSheetAttributeKey; label: string; short: string }> = [
@@ -205,6 +205,7 @@
   let attributes = createDefaultCharacterSheetAttributes()
   let persistSelectedCharacterTimer: ReturnType<typeof setTimeout> | null = null
   let persistRequestToken = 0
+  let characterCards: ChatCharacterCard[] = []
   let skillAllocations: CharacterSheetSkillAllocation[] = characterSheetBaseSkills.map((skill) => ({
     ...skill,
     growthPoints: 0,
@@ -236,6 +237,12 @@
     handledWorldviewFilter = selectedWorldview
     void loadCharacterCards(selectedWorldview)
   }
+  $: if (authUserId !== handledAuthUserId) {
+    handledAuthUserId = authUserId
+    activeCharacterId = null
+    characterCards = []
+    void loadCharacterCards(selectedWorldview)
+  }
   $: if (characterSkillStateKey !== handledCharacterSkillStateKey) {
     handledCharacterSkillStateKey = characterSkillStateKey
     skillAllocations = buildSkillAllocationsFromCharacter(selectedCharacterCard)
@@ -248,6 +255,7 @@
   }
 
   let handledCharacterSkillStateKey = ''
+  let handledAuthUserId = authUserId
   let handledWorldviewFilter: string | null = null
 
   onMount(() => {
@@ -418,6 +426,7 @@
     try {
       const query = worldview === '' ? '' : `?worldview=${encodeURIComponent(worldview)}`
       const response = await fetch(buildChatHttpUrl(`/character-cards${query}`), {
+        cache: 'no-store',
         method: 'GET',
         credentials: 'include',
       })
@@ -941,7 +950,7 @@
         <label>
           <span>角色卡</span>
           <select oninput={handleCharacterCardSelect} value={getSelectedCharacterId()}>
-            <option value="">{characterSelectOptions.length > 0 ? '请选择角色卡' : '群聊中还没有角色卡'}</option>
+            <option value="">{characterSelectOptions.length > 0 ? '请选择角色卡' : '当前密钥还没有角色卡'}</option>
             {#each characterSelectOptions as option}
               <option value={option.id}>{option.label}</option>
             {/each}
